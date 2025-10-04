@@ -3,21 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Pen Plotter Flow Field</title>
+    <title>Lines Flow Field</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
     <style>
+        :root {
+            --accent-color: #0057ba;
+            --accent-color-hover: #0057ba; 
+            --text-color: #212529;
+            --bg-color: #fafafa;
+            --secondary-color: #70767b;
+            --secondary-color-hover: #5a6268;
+        }
+
         body {
             margin: 0;
             display: flex;
             min-height: 100vh;
-            background-color: #f0f0f0;
-            font-family: Arial, sans-serif;
+            background-color: var(--bg-color); 
+            font-family: 'Inter', Arial, sans-serif;
             overflow: hidden;
+            color: var(--text-color);
         }
+
         #sidebar {
             width: 300px;
+            height: 100vh; 
             background: white;
-            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
-            overflow-y: auto;
+            box-shadow: 4px 0 15px rgba(0, 0, 0, 0.05);
+            overflow-y: auto; 
             transition: margin-left 0.3s ease;
             position: relative;
             z-index: 10;
@@ -26,53 +39,92 @@
             margin-left: -300px;
         }
         #controls {
-            padding: 20px;
+            padding: 25px 20px 20px 20px;
         }
+        
         #toggleBtn {
             position: fixed;
-            left: 300px;
+            left: 300px; 
             top: 20px;
             width: 40px;
             height: 40px;
-            background: #333;
+            background: var(--accent-color);
             color: white;
             border: none;
             border-radius: 0 4px 4px 0;
             cursor: pointer;
             z-index: 11;
-            transition: left 0.3s ease;
+            transition: left 0.3s ease, background 0.3s ease;
             display: flex;
             align-items: center;
             justify-content: center;
             font-size: 18px;
+            font-weight: bold;
         }
-        #toggleBtn.hidden {
+        
+        #toggleBtn.hidden { 
             left: 0;
+            background: var(--text-color);
         }
         #toggleBtn:hover {
-            background: #555;
+            background: var(--accent-color-hover);
         }
+        #toggleBtn.hidden:hover {
+            background: var(--secondary-color-hover);
+        }
+
         #canvasContainer {
             flex: 1;
             display: flex;
             justify-content: center;
             align-items: center;
         }
+        
+        h2 {
+            margin: 0 0 20px 0;
+            font-size: 20px;
+            font-weight: 600;
+            color: var(--text-color);
+            border-bottom: 2px solid var(--accent-color);
+            padding-bottom: 8px;
+        }
+
         .control-group {
-            margin-bottom: 15px;
+            margin-bottom: 20px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
         }
+        #controls > .control-group:first-of-type {
+            border-top: none;
+            padding-top: 0;
+        }
+
         .control-group label {
-            display: block;
-            margin-bottom: 5px;
-            font-weight: bold;
-            font-size: 13px;
-            color: #333;
+            font-weight: 500; 
+            font-size: 14px;
+            color: var(--text-color);
+            margin-bottom: 8px;
         }
+
+        .value-display {
+            min-width: 50px;
+            text-align: right;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+            font-weight: 600;
+            color: var(--text-color);
+        }
+        
         .slider-container {
             display: flex;
             align-items: center;
             gap: 10px;
+            background: #f8f9fa;
+            padding: 8px 10px;
+            border-radius: 4px;
+            border: 1px solid #ddd;
         }
+
         input[type="range"] {
             flex: 1;
             height: 6px;
@@ -80,53 +132,80 @@
             background: #ddd;
             outline: none;
         }
-        input[type="range"]::-webkit-slider-thumb {
-            width: 18px;
-            height: 18px;
-            border-radius: 50%;
-            background: #333;
-            cursor: pointer;
-        }
+        input[type="range"]::-webkit-slider-thumb,
         input[type="range"]::-moz-range-thumb {
             width: 18px;
             height: 18px;
             border-radius: 50%;
-            background: #333;
+            background: var(--accent-color);
             cursor: pointer;
-            border: none;
         }
-        .value-display {
-            min-width: 50px;
-            text-align: right;
-            font-family: monospace;
+
+        #seedInput {
+            flex: 1; 
+            padding: 8px; 
+            border: 1px solid #ced4da; 
+            border-radius: 4px;
             font-size: 14px;
+            font-family: 'Inter', sans-serif;
+            margin-top: 5px;
         }
+        
         .button-group {
             display: flex;
             flex-direction: column;
             gap: 10px;
-            margin-top: 20px;
+            margin-top: 25px;
         }
+        
         button {
             width: 100%;
             padding: 12px 20px;
-            background: #333;
+            background: var(--accent-color);
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
             font-size: 14px;
-            font-weight: bold;
+            font-weight: 600;
+            transition: background 0.2s;
         }
         button:hover {
-            background: #555;
+            background: var(--accent-color-hover);
         }
-        h2 {
-            margin: 0 0 20px 0;
-            font-size: 18px;
-            color: #333;
-            border-bottom: 2px solid #333;
-            padding-bottom: 10px;
+
+        .control-group button {
+            background: #495057; 
+            padding: 8px 16px;
+            margin-top: 10px;
+        }
+        .control-group button:hover {
+            background: #495057;
+        }
+
+        .button-group button:nth-child(2), 
+        .button-group button:nth-child(3), 
+        .button-group button:nth-child(4) {  
+            background: var(--secondary-color);
+            font-weight: 500;
+            padding: 10px 20px;
+        }
+        .button-group button:nth-child(2):hover,
+        .button-group button:nth-child(3):hover,
+        .button-group button:nth-child(4):hover {
+            background: var(--secondary-color-hover);
+        }
+        
+        .info-box {
+            margin-top: 25px; 
+            padding: 15px;
+            background-color: #929598; 
+            border: 1px solid #ffffff;
+            border-radius: 4px;
+            font-size: 12px;
+            color: #495057; 
+            line-height: 1.5;
+            text-align: center;
         }
     </style>
 </head>
@@ -138,46 +217,62 @@
             <h2>Flow Field Controls</h2>
             
             <div class="control-group">
-                <label>Field Scale: <span class="value-display" id="fieldScaleValue">0.005</span></label>
+                <div style="display: flex; justify-content: space-between;">
+                    <label for="fieldScale">Field Scale</label>
+                    <span class="value-display" id="fieldScaleValue">0.005</span>
+                </div>
                 <div class="slider-container">
                     <input type="range" id="fieldScale" min="0.001" max="0.05" step="0.001" value="0.005">
                 </div>
             </div>
             
             <div class="control-group">
-                <label>Resolution: <span class="value-display" id="resolutionValue">30</span></label>
+                <div style="display: flex; justify-content: space-between;">
+                    <label for="resolution">Resolution</label>
+                    <span class="value-display" id="resolutionValue">30</span>
+                </div>
                 <div class="slider-container">
                     <input type="range" id="resolution" min="10" max="100" step="5" value="30">
                 </div>
             </div>
             
             <div class="control-group">
-                <label>Number of Paths: <span class="value-display" id="numPathsValue">500</span></label>
+                <div style="display: flex; justify-content: space-between;">
+                    <label for="numPaths">Number of Paths</label>
+                    <span class="value-display" id="numPathsValue">500</span>
+                </div>
                 <div class="slider-container">
                     <input type="range" id="numPaths" min="100" max="7000" step="50" value="500">
                 </div>
             </div>
             
             <div class="control-group">
-                <label>Step Size: <span class="value-display" id="stepSizeValue">4</span></label>
+                <div style="display: flex; justify-content: space-between;">
+                    <label for="stepSize">Step Size</label>
+                    <span class="value-display" id="stepSizeValue">4.0</span> 
+                </div>
                 <div class="slider-container">
                     <input type="range" id="stepSize" min="1" max="20" step="0.5" value="4">
                 </div>
             </div>
             
             <div class="control-group">
-                <label>Stroke Weight: <span class="value-display" id="strokeWeightValue">0.5</span></label>
+                <div style="display: flex; justify-content: space-between;">
+                    <label for="strokeWeight">Stroke Weight</label>
+                    <span class="value-display" id="strokeWeightValue">0.5</span>
+                </div>
                 <div class="slider-container">
                     <input type="range" id="strokeWeight" min="0.1" max="3" step="0.1" value="0.5">
                 </div>
             </div>
             
             <div class="control-group">
-                <label>Seed: <span class="value-display" id="seedValue">Random</span></label>
-                <div class="slider-container">
-                    <input type="number" id="seedInput" placeholder="Enter seed" style="flex: 1; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">
+                <div style="display: flex; justify-content: space-between;">
+                    <label for="seedInput">Seed</label>
+                    <span class="value-display" id="seedValue">Random</span> 
                 </div>
-                <button onclick="randomizeSeed()" style="width: 100%; margin-top: 5px; padding: 8px 16px;">Random Seed</button>
+                <input type="number" id="seedInput" placeholder="Enter seed">
+                <button onclick="randomizeSeed()">Random Seed</button>
             </div>
             
             <div class="button-group">
@@ -186,12 +281,18 @@
                 <button onclick="downloadCSV()">Download CSV</button>
                 <button onclick="downloadJSON()">Download JSON</button>
             </div>
+            
+            <div class="info-box">
+                <div>Created by ToledoEM</div>
+                MIT License</div>
+            </div>
+
         </div>
     </div>
     
     <div id="canvasContainer"></div>
     
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.1/p5.min.js"></script>
-    <script src="slider_gemeni.js"></script>
+    <script src="flowfields.js"></script>
 </body>
 </html>
