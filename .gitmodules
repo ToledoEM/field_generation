@@ -1,0 +1,3 @@
+[submodule "autofieldgenerator"]
+	path = autofieldgenerator
+	url = https://github.com/ToledoEM/autofieldgenerator
