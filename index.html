@@ -18,6 +18,7 @@
         body {
             margin: 0;
             display: flex;
+            align-items: flex-start; /* Align content to the top */
             min-height: 100vh;
             background-color: var(--bg-color); 
             font-family: 'Inter', Arial, sans-serif;
@@ -42,6 +43,27 @@
             padding: 25px 20px 20px 20px;
         }
         
+        /* New: Main Content Area next to sidebar */
+        #mainContent {
+            flex-grow: 1; /* Take up remaining space */
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 20px; /* Padding for the entire content area */
+        }
+
+        /* New: Parameter Display Line Style (MUST be below the draw) */
+        #parameters {
+            margin-top: 10px;
+            padding: 5px 10px;
+            background: #e9e9e9;
+            border-radius: 3px;
+            font-size: 0.9em;
+            color: #333;
+            width: 800px; /* Match canvas width */
+            text-align: center;
+        }
+
         #toggleBtn {
             position: fixed;
             left: 300px; 
@@ -74,10 +96,7 @@
         }
 
         #canvasContainer {
-            flex: 1;
-            display: flex;
-            justify-content: center;
-            align-items: center;
+            border: 1px solid #333; 
         }
         
         h2 {
@@ -104,6 +123,17 @@
             font-size: 14px;
             color: var(--text-color);
             margin-bottom: 8px;
+        }
+        
+        .control-group select {
+            width: 100%;
+            padding: 8px; 
+            border: 1px solid #ced4da; 
+            border-radius: 4px;
+            font-size: 14px;
+            font-family: 'Inter', sans-serif;
+            margin-top: 5px;
+            background: white;
         }
 
         .value-display {
@@ -158,8 +188,8 @@
             margin-top: 25px;
         }
         
+        /* General button styles for the sidebar */
         button {
-            width: 100%;
             padding: 12px 20px;
             background: var(--accent-color);
             color: white;
@@ -180,27 +210,22 @@
             margin-top: 10px;
         }
         .control-group button:hover {
-            background: #495057;
-        }
-
-        .button-group button:nth-child(2), 
-        .button-group button:nth-child(3), 
-        .button-group button:nth-child(4) {  
-            background: var(--secondary-color);
-            font-weight: 500;
-            padding: 10px 20px;
-        }
-        .button-group button:nth-child(2):hover,
-        .button-group button:nth-child(3):hover,
-        .button-group button:nth-child(4):hover {
-            background: var(--secondary-color-hover);
+            background: #5a6268;
         }
         
+        /* Auto Generate Button Colors */
+        #autoToggle {
+            background: tomato; /* Non-active color (tomato2 shade) */
+        }
+        #autoToggle:hover {
+            background: #ff6347; /* Slightly darker tomato on hover */
+        }
+
         .info-box {
             margin-top: 25px; 
             padding: 15px;
-            background-color: #929598; 
-            border: 1px solid #ffffff;
+            background-color: #e9ecef; 
+            border: 1px solid #ced4da;
             border-radius: 4px;
             font-size: 12px;
             color: #495057; 
@@ -275,8 +300,18 @@
                 <button onclick="randomizeSeed()">Random Seed</button>
             </div>
             
+            <div class="control-group">
+                <label for="noiseTypeSelect">Noise Type</label>
+                <select id="noiseTypeSelect">
+                    <option value="Perlin">Perlin Noise</option>
+                    <option value="Simplex">Simplex Noise</option>
+                </select>
+            </div>
+            
             <div class="button-group">
                 <button onclick="regenerate()">Regenerate</button>
+                <button id="autoToggle" onclick="toggleAutoGenerate()">Start Auto Generate</button>
+                
                 <button onclick="downloadSVG()">Download SVG</button>
                 <button onclick="downloadCSV()">Download CSV</button>
                 <button onclick="downloadJSON()">Download JSON</button>
@@ -290,9 +325,17 @@
         </div>
     </div>
     
-    <div id="canvasContainer"></div>
-    
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.1/p5.min.js"></script>
-    <script src="flowfields.js"></script>
+    <div id="mainContent">
+        
+        <div id="canvasContainer"></div>
+        
+        <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.1/p5.min.js"></script>
+        <script src="https://unpkg.com/simplex-noise@2.4.0/simplex-noise.js"></script>
+        <script src="flowfields.js"></script>
+        
+        <div id="parameters">
+            </div>
+
+    </div>
 </body>
 </html>
