@@ -43,7 +43,6 @@
             padding: 25px 20px 20px 20px;
         }
         
-        /* New: Main Content Area next to sidebar */
         #mainContent {
             flex-grow: 1; /* Take up remaining space */
             display: flex;
@@ -52,7 +51,6 @@
             padding: 20px; /* Padding for the entire content area */
         }
 
-        /* New: Parameter Display Line Style (MUST be below the draw) */
         #parameters {
             margin-top: 10px;
             padding: 5px 10px;
@@ -213,12 +211,11 @@
             background: #5a6268;
         }
         
-        /* Auto Generate Button Colors */
         #autoToggle {
-            background: tomato; /* Non-active color (tomato2 shade) */
+            background: rgb(248, 95, 68); 
         }
         #autoToggle:hover {
-            background: #ff6347; /* Slightly darker tomato on hover */
+            background: #ff6347; 
         }
 
         .info-box {
@@ -227,7 +224,7 @@
             background-color: #e9ecef; 
             border: 1px solid #ced4da;
             border-radius: 4px;
-            font-size: 12px;
+            font-size: 10px;
             color: #495057; 
             line-height: 1.5;
             text-align: center;
@@ -277,7 +274,7 @@
                     <span class="value-display" id="stepSizeValue">4.0</span> 
                 </div>
                 <div class="slider-container">
-                    <input type="range" id="stepSize" min="1" max="20" step="0.5" value="4">
+                    <input type="range" id="stepSize" min="1" max="50" step="0.5" value="5">
                 </div>
             </div>
             
@@ -296,7 +293,7 @@
                     <label for="seedInput">Seed</label>
                     <span class="value-display" id="seedValue">Random</span> 
                 </div>
-                <input type="number" id="seedInput" placeholder="Enter seed">
+                <input type="number" id="seedInput" placeholder="Enter seed" value="42">
                 <button onclick="randomizeSeed()">Random Seed</button>
             </div>
             
@@ -329,8 +326,8 @@
         
         <div id="canvasContainer"></div>
         
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.1/p5.min.js"></script>
-        <script src="https://unpkg.com/simplex-noise@2.4.0/simplex-noise.js"></script>
+        <script src="libraries/p5.min.js"></script>
+        <script src="libraries/simplex-noise.js"></script>
         <script src="flowfields.js"></script>
         
         <div id="parameters">

@@ -79,8 +79,6 @@ function randomizeAllParams() {
   STROKE_WEIGHT = random(0.3, 1.0);
   CURRENT_SEED = null; // Always randomize seed in auto-mode
   
-  // NOTE: NOISE_TYPE is explicitly NOT randomized here. It respects the UI selection.
-
   // 2. Update UI elements to reflect new randomized values
   document.getElementById('fieldScale').value = FIELD_SCALE;
   document.getElementById('fieldScaleValue').textContent = FIELD_SCALE.toFixed(3);
