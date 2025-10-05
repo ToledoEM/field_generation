@@ -22,13 +22,13 @@ At its core, Flow Field Art Creator is an exploration on a system governed by de
 
 ### What is a Flow Field?
 
-Think of a flow field like a wind map - imagine thousands of tiny arrows showing which way the wind is blowing. We use something called Perlin noise (a special kind of randomness that creates natural patterns) to make these flows look smooth and organic, just like you'd see in nature.
+Flow field analogy would be thousands of tiny arrows showing which way the wind is blowing.
 
 ### The Mathematics
 
 #### 1. Perlin Noise Generation
 
-We use something called Perlin noise to make everything flow naturally. It's like the difference between static on a TV (random noise) and the way clouds form in the sky (Perlin noise) - one is jarring, the other is smooth and natural.
+Perlin noise is used to make everything flow naturally. It's like the difference between static on a TV (random noise) and the way clouds form in the sky (Perlin noise) - one is jarring, the other is smooth and natural.
 
 ```javascript
 let angle = noise(xoff, yoff) * TWO_PI * 4;
@@ -180,11 +180,11 @@ Each path becomes a `<polyline>` element containing all the points the particle 
 
 ## Visualizing with R
 
-Want to take your flow field art to the next level? The exported CSV files work beautifully with R! Check out these cool ways to visualize your creation:
+Want to take your flow field art to the next level? The exported CSV files work beautifully with R! 
 
 ```R
 library(tidyverse)
-library(wesanderson) # For some really nice color palettes
+library(wesanderson) 
 
 # Load your flow field data
 plotter <- read_csv("plotter_flow_field.csv")
@@ -194,7 +194,6 @@ pal <- wes_palette(9, name = "Zissou1", type = "continuous")
 plotter %>% ggplot(aes(x, y, group = path_id)) +
   geom_path() + theme_void()
 
-# Add some color magic! Each path gets its own unique color
 plotter %>% 
   group_by(path_id) %>% 
   mutate(color = sample(pal, 1)) %>% 
@@ -205,7 +204,6 @@ plotter %>%
   scale_color_identity()
 ```
 
-You can even create beautiful panel plots that separate paths by color. Here's an example:
 
 <p align="center">
   <img src="example/plotter_flow_field_colors.png" alt="Colored Example"  width="600">
@@ -215,7 +213,7 @@ You can even create beautiful panel plots that separate paths by color. Here's a
   <img src="example/plotter_flow_field_colors_panel.png" alt="Faceted Example"  width="600">
 </p>
 
-The R script uses the Wes Anderson color palette package for that extra artistic touch! You can find the complete R script and more examples in the `example` folder.
+The R script uses the Wes Anderson color palette package. You can find the complete R script and more examples in the `example` folder.
 
 ## License
 
