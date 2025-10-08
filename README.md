@@ -206,14 +206,20 @@ plotter %>%
 
 
 <p align="center">
-  <img src="example/plotter_flow_field_colors.png" alt="Colored Example"  width="600">
+  <img src="example/example_1/plotter_flow_field_colors.png" alt="Colored Example"  width="600">
 </p>
 
 <p align="center">
-  <img src="example/plotter_flow_field_colors_panel.png" alt="Faceted Example"  width="600">
+  <img src="example/example_2/plotter_flow_field_colors.png" alt="Colored Example"  width="600">
+</p>
+<p align="center">
+  <img src="example/example_1/plotter_flow_field_colors_panel.png" alt="Faceted Example"  width="600">
+</p>
+<p align="center">
+  <img src="example/example_2/plotter_flow_field_colors_panel.png" alt="Faceted Example"  width="600">
 </p>
 
-The R script uses the Wes Anderson color palette package. You can find the complete R script and more examples in the `example` folder.
+*The R script uses the Wes Anderson color palette package. You can find the complete R script and more examples in the `example` folder.*
 
 ## License
 

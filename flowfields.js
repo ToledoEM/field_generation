@@ -1,13 +1,13 @@
 /**
  * Toledo EM 2025
  * Plotter Flow Field Generator
- * 
- * A p5.js-based tool to generate flow field visualizations suitable for plotter art.
+ * * A p5.js-based tool to generate flow field visualizations suitable for plotter art.
  * Users can customize parameters such as field scale, resolution, number of paths,
  * step size, stroke weight, and random seed. The generated paths can be exported
  * in SVG, CSV, and JSON formats.
  */
 
+// Global Parameters
 let FIELD_SCALE = 0.005;
 let RESOLUTION = 30;
 let NUM_PATHS = 500;
@@ -15,6 +15,12 @@ let STEP_SIZE = 4;
 let STROKE_WEIGHT = 0.5;
 let CURRENT_SEED = null;
 let ACTUAL_SEED = null; 
+
+// Global State for Noise and Auto-Generation
+let NOISE_TYPE = 'Perlin'; // Default noise type
+let noiseGenerator; // SimplexNoise instance
+let autoGenInterval;
+let isAutoGenerating = false;
 
 let field = [];
 let columns, rows;
@@ -26,8 +32,75 @@ function setup() {
   columns = floor(width / STEP_SIZE);
   rows = floor(height / STEP_SIZE);
   
+  // Initialize Simplex Noise generator (will be re-seeded in generateField)
+  if (typeof SimplexNoise === 'function') {
+      noiseGenerator = new SimplexNoise(random(10000).toString());
+  }
+  
+  // Expose global functions for HTML buttons
+  window.regenerate = regenerate;
+  window.toggleAutoGenerate = toggleAutoGenerate; 
+  window.randomizeSeed = randomizeSeed;
+  window.downloadSVG = downloadSVG;
+  window.downloadCSV = downloadCSV;
+  window.downloadJSON = downloadJSON;
+  window.toggleSidebar = toggleSidebar;
+
   setTimeout(setupSliders, 100);
   regenerate();
+}
+
+// Function to handle auto-generation toggle
+function toggleAutoGenerate() {
+  const button = document.getElementById('autoToggle');
+  
+  if (isAutoGenerating) {
+    // Stop auto-generation
+    clearInterval(autoGenInterval);
+    button.textContent = "Start Auto Generate";
+    button.style.background = 'tomato'; // Non-active color (tomato2 shade)
+  } else {
+    // Start auto-generation (every 2 seconds)
+    autoGenInterval = setInterval(randomizeAndRegenerate, 2000); 
+    button.textContent = "Stop Auto Generate";
+    button.style.background = '#8B4513'; // Active color (bricklayer shade)
+  }
+  
+  isAutoGenerating = !isAutoGenerating;
+}
+
+// CORRECTED: Function to randomize all parameters (used by auto-generate)
+function randomizeAllParams() {
+  // 1. Randomize Numeric Parameters
+  FIELD_SCALE = random(0.003, 0.008);
+  RESOLUTION = floor(random(20, 50));
+  NUM_PATHS = floor(random(1000, 2000));
+  STEP_SIZE = random(3, 7);
+  STROKE_WEIGHT = random(0.3, 1.0);
+  CURRENT_SEED = null; // Always randomize seed in auto-mode
+  
+  // 2. Update UI elements to reflect new randomized values
+  document.getElementById('fieldScale').value = FIELD_SCALE;
+  document.getElementById('fieldScaleValue').textContent = FIELD_SCALE.toFixed(3);
+  document.getElementById('resolution').value = RESOLUTION;
+  document.getElementById('resolutionValue').textContent = RESOLUTION;
+  document.getElementById('numPaths').value = NUM_PATHS;
+  document.getElementById('numPathsValue').textContent = NUM_PATHS;
+  document.getElementById('stepSize').value = STEP_SIZE;
+  document.getElementById('stepSizeValue').textContent = STEP_SIZE.toFixed(1);
+  document.getElementById('strokeWeight').value = STROKE_WEIGHT;
+  document.getElementById('strokeWeightValue').textContent = STROKE_WEIGHT.toFixed(1);
+  document.getElementById('seedInput').value = '';
+  document.getElementById('seedValue').textContent = 'Random';
+  
+  // Update columns/rows based on new STEP_SIZE
+  columns = floor(width / STEP_SIZE);
+  rows = floor(height / STEP_SIZE);
+}
+
+function randomizeAndRegenerate() {
+    randomizeAllParams();
+    regenerate();
 }
 
 function toggleSidebar() {
@@ -50,9 +123,11 @@ function setupSliders() {
   const numPaths = document.getElementById('numPaths');
   const stepSize = document.getElementById('stepSize');
   const strokeWeight = document.getElementById('strokeWeight');
+  const seedInput = document.getElementById('seedInput');
+  const noiseTypeSelect = document.getElementById('noiseTypeSelect'); 
   
-  if (!fieldScale) {
-    console.error('Sliders not found in DOM');
+  if (!fieldScale || !noiseTypeSelect) {
+    console.error('UI Elements not fully loaded in DOM.');
     return;
   }
   
@@ -89,7 +164,6 @@ function setupSliders() {
   });
   
   // Seed Input
-  const seedInput = document.getElementById('seedInput');
   seedInput.addEventListener('input', (e) => {
     const value = e.target.value;
     if (value === '') {
@@ -100,6 +174,15 @@ function setupSliders() {
       document.getElementById('seedValue').textContent = CURRENT_SEED;
     }
   });
+
+  // Noise Type Dropdown Handler (Stays the same: handles manual change)
+  noiseTypeSelect.addEventListener('change', (e) => {
+    NOISE_TYPE = e.target.value;
+    regenerate(); // Regenerate immediately on noise change
+  });
+  
+  // Initialize the parameters display
+  displayParameters();
 }
 
 function randomizeSeed() {
@@ -118,10 +201,21 @@ function regenerate() {
 function generateField() {
   field = new Array(columns * rows);
   
+  // Seed Logic: If null, generate random seed. Record the actual seed used.
   let seed = CURRENT_SEED !== null ? CURRENT_SEED : random(10000);
   ACTUAL_SEED = Math.floor(seed); 
-  noiseSeed(seed);
   
+  // Noise Initialization based on selection
+  if (NOISE_TYPE === 'Perlin') {
+      noiseSeed(seed);
+  } else {
+      // Re-seed Simplex Noise instance (assuming SimplexNoise is loaded)
+      if (typeof SimplexNoise === 'function') {
+          noiseGenerator = new SimplexNoise(seed.toString());
+      }
+  }
+  
+  // Update Seed Display
   if (CURRENT_SEED === null) {
     document.getElementById('seedValue').textContent = `Random (${ACTUAL_SEED})`;
   }
@@ -130,7 +224,23 @@ function generateField() {
   for (let i = 0; i < columns; i++) {
     let yoff = 0;
     for (let j = 0; j < rows; j++) {
-      let angle = noise(xoff, yoff) * TWO_PI * 4;
+      
+      let noiseVal;
+      // Core Logic: Use selected noise function
+      if (NOISE_TYPE === 'Perlin') {
+          // p5.js noise (Perlin/Value noise)
+          noiseVal = noise(xoff, yoff);
+      } else {
+          // Simplex noise returns [-1, 1], so map to [0, 1] for angle calculation
+          if (noiseGenerator) {
+              noiseVal = map(noiseGenerator.noise2D(xoff, yoff), -1, 1, 0, 1);
+          } else {
+              // Fallback to Perlin if Simplex is selected but not initialized
+              noiseVal = noise(xoff, yoff); 
+          }
+      }
+      
+      let angle = noiseVal * TWO_PI * 4;
       let v = p5.Vector.fromAngle(angle);
       let index = i + j * columns;
       field[index] = v;
@@ -138,6 +248,9 @@ function generateField() {
     }
     xoff += FIELD_SCALE;
   }
+  
+  // Update parameter display after field generation
+  displayParameters();
 }
 
 function drawField() {
@@ -181,6 +294,24 @@ function drawField() {
   }
 }
 
+// Function to display current parameters
+function displayParameters() {
+  const paramsDiv = document.getElementById('parameters');
+  if (paramsDiv) {
+    // Total Path Length is approximated by RESOLUTION * STEP_SIZE
+    const totalPathLength = (RESOLUTION * STEP_SIZE).toFixed(1); 
+    
+    paramsDiv.textContent = 
+      `Noise: ${NOISE_TYPE} | ` +
+      `Scale: ${FIELD_SCALE.toFixed(4)} | ` +
+      `Paths: ${NUM_PATHS} | ` +
+      `Avg Path Length: ${totalPathLength} units | ` + // Displaying the calculated length proxy
+      `Stroke: ${STROKE_WEIGHT.toFixed(2)}`;
+  }
+}
+
+// Download functions (remain the same)
+
 function downloadCSV() {
   let csv = 'path_id,point_index,x,y\n';
   
@@ -208,6 +339,7 @@ function downloadJSON() {
       total_paths: paths.length
     },
     parameters: {
+      noise_type: NOISE_TYPE, // Includes the active noise type
       field_scale: FIELD_SCALE,
       resolution: RESOLUTION,
       num_paths: NUM_PATHS,
