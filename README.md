@@ -158,6 +158,54 @@ Each path becomes a `<polyline>` element containing all the points the particle 
 3. Click "Regenerate" to create a new design
 4. Click "Download SVG" to export for plotting
 5. Click CSV/JSON to download all the cordinates and parameters of the plot
+6. (New) Choose a color palette from the Palette dropdown to colorize paths
+7. (New) Use keyboard shortcuts (see below) for faster iteration
+
+### Running Locally (Modules & CORS)
+
+Because the app now uses ES modules (`src/index.js`), you MUST serve the files over HTTP (opening `index.html` directly with `file://` will fail with CORS errors).
+
+Quick options:
+
+```bash
+# Node built-in dev server (added to repo)
+npm install
+npm run dev
+# → http://localhost:5173
+
+# OR Python 3 quick server
+python3 -m http.server 5173
+
+# OR npx
+npx http-server -p 5173
+```
+
+Then open: `http://localhost:5173/` in your browser.
+
+### Keyboard Shortcuts
+
+| Key | Action |
+|-----|--------|
+| R | Regenerate artwork |
+| A | Toggle auto-generate |
+| S | Download SVG |
+| C | Download CSV |
+| J | Download JSON |
+| H | Hide / show control panel |
+
+### Palettes
+
+Available palette names (cyclic across paths): `mono`, `warm`, `cool`, `earth`, `neon`, `pastel`.
+
+### SVG Metadata
+
+The exported SVG now embeds a `<metadata>` tag containing a JSON blob with generation parameters (seed, palette, noise type, etc.) for reproducibility. Example (URL-encoded inside the tag):
+
+```xml
+<metadata id="flow-field-metadata">%7B%22timestamp%22...%7D</metadata>
+```
+
+You can decode this to reconstruct the configuration.
 
 ## Dependencies
 
