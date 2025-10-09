@@ -1,0 +1,12 @@
+{
+  "name": "flow-field-art",
+  "private": true,
+  "type": "module",
+  "version": "0.2.0",
+  "description": "Generative flow field art (modular p5.js)",
+  "scripts": {
+    "dev": "node server.js"
+  },
+  "keywords": ["p5", "generative", "flow-field", "art"],
+  "license": "MIT"
+}

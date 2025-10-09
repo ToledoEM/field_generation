@@ -304,6 +304,36 @@
                     <option value="Simplex">Simplex Noise</option>
                 </select>
             </div>
+
+            <div class="control-group">
+                <label for="paletteSelect">Color Palette</label>
+                <select id="paletteSelect">
+                    <option value="mono">Monochrome (Black)</option>
+                    <option value="warm">Warm Sunset</option>
+                    <option value="cool">Cool Blues</option>
+                    <option value="earth">Earth Tones</option>
+                    <option value="neon">Neon Pop</option>
+                    <option value="pastel">Soft Pastel</option>
+                                        <optgroup label="Sanzo-Wada">
+                                            <option value="sw01">SW 01</option>
+                                            <option value="sw02">SW 02</option>
+                                            <option value="sw03">SW 03</option>
+                                            <option value="sw04">SW 04</option>
+                                            <option value="sw05">SW 05</option>
+                                            <option value="sw06">SW 06</option>
+                                            <option value="sw07">SW 07</option>
+                                            <option value="sw08">SW 08</option>
+                                            <option value="sw09">SW 09</option>
+                                            <option value="sw10">SW 10</option>
+                                        </optgroup>
+                </select>
+                <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+                  <input type="checkbox" id="includeBW" checked>
+                  <label for="includeBW" style="margin:0; font-weight:400;">Always include B & W</label>
+                </div>
+                                <button id="bgFlipBtn" style="margin-top:10px; background:#343a40;">Flip Background</button>
+                                <button id="invertColorsBtn" style="margin-top:10px; background:#6c757d;">Invert Colors</button>
+            </div>
             
             <div class="button-group">
                 <button onclick="regenerate()">Regenerate</button>
@@ -316,7 +346,10 @@
             
             <div class="info-box">
                 <div>Created by ToledoEM</div>
-                MIT License</div>
+                <div>MIT License</div>
+                <div style="margin-top:8px; font-size:9px; line-height:1.3;">
+                    Shortcuts: R = regenerate, A = auto, S = SVG, C = CSV, J = JSON, H = hide panel
+                </div>
             </div>
 
         </div>
@@ -326,9 +359,10 @@
         
         <div id="canvasContainer"></div>
         
-        <script src="libraries/p5.min.js"></script>
-        <script src="libraries/simplex-noise.js"></script>
-        <script src="flowfields.js"></script>
+    <!-- IMPORTANT: For ES module imports to work, serve this folder via an HTTP server (npm run dev, python -m http.server, etc.). -->
+    <script src="libraries/p5.min.js"></script>
+    <script src="libraries/simplex-noise.js"></script>
+    <script type="module" src="src/index.js"></script>
         
         <div id="parameters">
             </div>
