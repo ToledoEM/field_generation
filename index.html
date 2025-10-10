@@ -232,7 +232,7 @@
     </style>
 </head>
 <body>
-    <button id="toggleBtn" onclick="toggleSidebar()">◀</button>
+    <button id="toggleBtn">◀</button>
     
     <div id="sidebar">
         <div id="controls">
@@ -244,7 +244,7 @@
                     <span class="value-display" id="fieldScaleValue">0.005</span>
                 </div>
                 <div class="slider-container">
-                    <input type="range" id="fieldScale" min="0.001" max="0.05" step="0.001" value="0.005">
+                    <input type="range" id="fieldScale" min="0.001" max="0.5" step="0.001" value="0.005">
                 </div>
             </div>
             
@@ -264,7 +264,7 @@
                     <span class="value-display" id="numPathsValue">500</span>
                 </div>
                 <div class="slider-container">
-                    <input type="range" id="numPaths" min="100" max="7000" step="50" value="500">
+                    <input type="range" id="numPaths" min="100" max="10000" step="50" value="500">
                 </div>
             </div>
             
@@ -294,7 +294,7 @@
                     <span class="value-display" id="seedValue">Random</span> 
                 </div>
                 <input type="number" id="seedInput" placeholder="Enter seed" value="42">
-                <button onclick="randomizeSeed()">Random Seed</button>
+                <button id="randomSeedBtn">Random Seed</button>
             </div>
             
             <div class="control-group">
@@ -334,21 +334,218 @@
                                 <button id="bgFlipBtn" style="margin-top:10px; background:#343a40;">Flip Background</button>
                                 <button id="invertColorsBtn" style="margin-top:10px; background:#6c757d;">Invert Colors</button>
             </div>
+
+            <!-- Phase 4: Field & Visual Richness Controls -->
+            <div class="control-group">
+                <h3 style="margin: 20px 0 10px 0; font-size: 16px; color: var(--accent-color);">Advanced Field Options</h3>
+                
+                <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+                  <input type="checkbox" id="multiLayerBlending">
+                  <label for="multiLayerBlending" style="margin:0; font-weight:400;">Multi-Layer Field Blending</label>
+                </div>
+                
+                <div class="control-group" style="margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="baseFieldWeight">Base Field Weight</label>
+                        <span class="value-display" id="baseFieldWeightValue">0.7</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="baseFieldWeight" min="0.1" max="1.0" step="0.1" value="0.7">
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="secondaryFieldScale">Secondary Field Scale</label>
+                        <span class="value-display" id="secondaryFieldScaleValue">0.020</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="secondaryFieldScale" min="0.005" max="0.05" step="0.005" value="0.02">
+                    </div>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <h3 style="margin: 20px 0 10px 0; font-size: 16px; color: var(--accent-color);">Stroke Variations</h3>
+                
+                <label for="variableStrokeMode">Variable Stroke Mode</label>
+                <select id="variableStrokeMode">
+                    <option value="none">None (Uniform)</option>
+                    <option value="curvature">Weight by Curvature</option>
+                    <option value="taper">Weight Taper</option>
+                    <option value="alpha-curvature">Alpha by Curvature</option>
+                    <option value="alpha-taper">Alpha Taper</option>
+                </select>
+
+                <div class="control-group" style="margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="strokeWeightMultiplier">Stroke Weight Multiplier</label>
+                        <span class="value-display" id="strokeWeightMultiplierValue">3.0</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="strokeWeightMultiplier" min="1.0" max="5.0" step="0.1" value="3.0">
+                    </div>
+                </div>
+
+                <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+                  <input type="checkbox" id="colorDriftEnabled">
+                  <label for="colorDriftEnabled" style="margin:0; font-weight:400;">Color Drift</label>
+                </div>
+
+                <div class="control-group" style="margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="colorDriftAmount">Color Drift Amount</label>
+                        <span class="value-display" id="colorDriftAmountValue">0.1</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="colorDriftAmount" min="0.0" max="0.5" step="0.05" value="0.1">
+                    </div>
+                </div>
+
+                <button id="addNegativeSpaceBtn" style="margin-top:10px; background:#dc3545;">Add Negative Space Circle</button>
+                <button id="clearNegativeSpaceBtn" style="margin-top:5px; background:#6c757d;">Clear Negative Space</button>
+                
+                <div class="control-group" style="margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="repulsionStrength">Repulsion Strength</label>
+                        <span class="value-display" id="repulsionStrengthValue">3.0</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="repulsionStrength" min="0.5" max="10.0" step="0.5" value="3.0">
+                    </div>
+                </div>
+
+                <div class="control-group">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="repulsionRadius">Repulsion Radius Multiplier</label>
+                        <span class="value-display" id="repulsionRadiusValue">1.5</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="repulsionRadius" min="1.0" max="3.0" step="0.1" value="1.5">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Phase 5: Export Enhancement Controls -->
+            <div class="control-group">
+                <h3 style="margin: 20px 0 10px 0; font-size: 16px; color: var(--accent-color);">Export Options</h3>
+                
+                <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+                  <input type="checkbox" id="rdpSimplification">
+                  <label for="rdpSimplification" style="margin:0; font-weight:400;">RDP Simplification</label>
+                </div>
+
+                <div class="control-group" style="margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="rdpTolerance">RDP Tolerance</label>
+                        <span class="value-display" id="rdpToleranceValue">0.5</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="rdpTolerance" min="0.1" max="2.0" step="0.1" value="0.5">
+                    </div>
+                </div>
+
+                <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+                  <input type="checkbox" id="mergeCollinear">
+                  <label for="mergeCollinear" style="margin:0; font-weight:400;">Merge Collinear Segments</label>
+                </div>
+
+                <div class="control-group" style="margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="coordinateRounding">Coordinate Precision</label>
+                        <span class="value-display" id="coordinateRoundingValue">2</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="coordinateRounding" min="1" max="4" step="1" value="2">
+                    </div>
+                </div>
+
+                <label for="exportColorMode">Export Color Mode</label>
+                <select id="exportColorMode">
+                    <option value="palette">Palette Colors</option>
+                    <option value="monochrome">Monochrome</option>
+                    <option value="per-layer">Per-Layer Groups</option>
+                </select>
+            </div>
+
+            <!-- Phase 6: Cybernetic Systems Controls -->
+            <div class="control-group">
+                <h3 style="margin: 20px 0 10px 0; font-size: 16px; color: var(--accent-color);">Cybernetic Systems</h3>
+                
+                <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+                  <input type="checkbox" id="cyberneticsEnabled">
+                  <label for="cyberneticsEnabled" style="margin:0; font-weight:400;">Enable Cybernetic Feedback</label>
+                </div>
+
+                <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+                  <input type="checkbox" id="densityAdaptation">
+                  <label for="densityAdaptation" style="margin:0; font-weight:400;">Density Adaptation</label>
+                </div>
+
+                <div class="control-group" style="margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="adaptationRate">Adaptation Rate</label>
+                        <span class="value-display" id="adaptationRateValue">0.3</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="adaptationRate" min="0.1" max="1.0" step="0.1" value="0.3">
+                    </div>
+                </div>
+
+                <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+                  <input type="checkbox" id="pheromoneTrails">
+                  <label for="pheromoneTrails" style="margin:0; font-weight:400;">Pheromone Trails</label>
+                </div>
+
+                <div class="control-group" style="margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="pheromoneInfluence">Pheromone Influence</label>
+                        <span class="value-display" id="pheromoneInfluenceValue">0.2</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="pheromoneInfluence" min="0.1" max="0.5" step="0.05" value="0.2">
+                    </div>
+                </div>
+
+                <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+                  <input type="checkbox" id="emergentAttractors">
+                  <label for="emergentAttractors" style="margin:0; font-weight:400;">Emergent Attractors</label>
+                </div>
+
+                <div style="margin-top:8px; display:flex; gap:6px; align-items:center; font-size:12px;">
+                  <input type="checkbox" id="temporalMemory">
+                  <label for="temporalMemory" style="margin:0; font-weight:400;">Temporal Memory</label>
+                </div>
+
+                <div class="control-group" style="margin-top: 10px;">
+                    <div style="display: flex; justify-content: space-between;">
+                        <label for="feedbackGain">Feedback Gain</label>
+                        <span class="value-display" id="feedbackGainValue">0.1</span>
+                    </div>
+                    <div class="slider-container">
+                        <input type="range" id="feedbackGain" min="0.05" max="0.3" step="0.05" value="0.1">
+                    </div>
+                </div>
+
+                <div style="margin-top:8px; font-size:10px; color:#666; line-height:1.3;">
+                    Press 'C' to toggle cybernetic dashboard visualization
+                </div>
+            </div>
             
             <div class="button-group">
-                <button onclick="regenerate()">Regenerate</button>
-                <button id="autoToggle" onclick="toggleAutoGenerate()">Start Auto Generate</button>
+                <button>Regenerate</button>
+                <button id="autoToggle">Start Auto Generate</button>
                 
-                <button onclick="downloadSVG()">Download SVG</button>
-                <button onclick="downloadCSV()">Download CSV</button>
-                <button onclick="downloadJSON()">Download JSON</button>
+                <button>Download SVG</button>
+                <button>Download CSV</button>
+                <button>Download JSON</button>
             </div>
             
             <div class="info-box">
                 <div>Created by ToledoEM</div>
                 <div>MIT License</div>
                 <div style="margin-top:8px; font-size:9px; line-height:1.3;">
-                    Shortcuts: R = regenerate, A = auto, S = SVG, C = CSV, J = JSON, H = hide panel
+                    Shortcuts: R = regenerate, A = auto, S = SVG, C = CSV/Dashboard, J = JSON, H = hide panel
                 </div>
             </div>
 

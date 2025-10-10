@@ -4,23 +4,52 @@ import { NoiseField } from './field/NoiseField.js';
 import { ParticleSimulator } from './sim/ParticleSimulator.js';
 import { CanvasRenderer } from './render/CanvasRenderer.js';
 import { exportSVG } from './export/SVGExporter.js';
+import { CyberneticSystem } from './cybernetics/CyberneticSystem.js';
+import { CyberneticDashboard } from './cybernetics/CyberneticDashboard.js';
 
 // Global-ish runtime state encapsulated
 let config = cloneConfig(defaultConfig);
 let paletteColors = buildPaletteColors(config.palette, config.includeBW);
 let noiseFieldInstance; // created after p5 is ready
+let cyberneticSystem; // cybernetic feedback system
+let cyberneticDashboard; // real-time metrics display
 let paths = [];
 let autoGenInterval = null;
 let isAutoGenerating = false;
 
+// Mouse-based negative space creation
+let mousePressed = false;
+let mousePressStart = 0;
+let currentNegativeSpace = null;
+
 export function generateArtwork(inputConfig) {
   const cfg = { ...config, ...inputConfig };
   const p = window._p5Instance; // rely on single sketch instance
-  if (!noiseFieldInstance) noiseFieldInstance = new NoiseField(p, cfg);
+  
+  // Initialize cybernetic system if enabled
+  if (cfg.cyberneticsEnabled && !cyberneticSystem) {
+    cyberneticSystem = new CyberneticSystem(p, cfg);
+    cyberneticDashboard = new CyberneticDashboard(p, cyberneticSystem, cfg);
+    // Show dashboard by default when enabling cybernetics
+    if (cyberneticDashboard) {
+      cyberneticDashboard.isVisible = true;
+    }
+  }
+  
+  if (!noiseFieldInstance) noiseFieldInstance = new NoiseField(p, cfg, cyberneticSystem);
   noiseFieldInstance.config = cfg;
+  noiseFieldInstance.cyberneticSystem = cyberneticSystem;
   noiseFieldInstance.generate();
-  const simulator = new ParticleSimulator(p, noiseFieldInstance, cfg);
+  
+  const simulator = new ParticleSimulator(p, noiseFieldInstance, cfg, cyberneticSystem);
   const newPaths = simulator.generatePaths();
+  
+  // Update cybernetic system
+  if (cyberneticSystem && cfg.cyberneticsEnabled) {
+    cyberneticSystem.update();
+    if (cyberneticDashboard) cyberneticDashboard.update();
+  }
+  
   return {
     paths: newPaths,
     metadata: {
@@ -58,7 +87,16 @@ function updateParamsBar() {
   if (!paramsDiv) return;
   const avgPathLen = (config.resolution * config.stepSize).toFixed(1);
   const bg = config.backgroundColor || '#FFFFFF';
-  paramsDiv.textContent = `Noise: ${config.noiseType} | Scale: ${config.fieldScale.toFixed(4)} | Paths: ${config.numPaths} | Avg Path Length: ${avgPathLen} | Stroke: ${config.strokeWeight.toFixed(2)} | Palette: ${config.palette} | BG: ${bg} | Invert: ${config.invertColors ? 'ON' : 'OFF'}`;
+  const multiLayer = config.multiLayerBlending ? 'ON' : 'OFF';
+  const strokeMode = config.variableStrokeMode !== 'none' ? config.variableStrokeMode : 'uniform';
+  const exportOpts = [
+    config.rdpSimplification ? 'RDP' : '',
+    config.mergeCollinear ? 'Merge' : '',
+    config.exportColorMode !== 'palette' ? config.exportColorMode : ''
+  ].filter(Boolean).join(',') || 'basic';
+  const cybernetics = config.cyberneticsEnabled ? 'ENABLED' : 'OFF';
+  
+  paramsDiv.textContent = `Noise: ${config.noiseType} | Scale: ${config.fieldScale.toFixed(4)} | Multi-Layer: ${multiLayer} | Paths: ${config.numPaths} | Stroke: ${strokeMode} | Palette: ${config.palette} | Export: ${exportOpts} | Cybernetics: ${cybernetics} | BG: ${bg} | Invert: ${config.invertColors ? 'ON' : 'OFF'}`;
 }
 
 function setupUI() {
@@ -69,23 +107,96 @@ function setupUI() {
     el.addEventListener('input', e => {
       const raw = isFloat ? parseFloat(e.target.value) : parseInt(e.target.value, 10);
       config[prop] = transform(raw);
-      if (valSpan) valSpan.textContent = isFloat ? raw.toFixed( prop === 'fieldScale' ? 3 : 1) : raw;
+      if (valSpan) valSpan.textContent = isFloat ? raw.toFixed( prop === 'fieldScale' ? 3 : prop.includes('Scale') ? 3 : 1) : raw;
     });
   };
+
+  const bindCheckbox = (id, prop) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', e => {
+      config[prop] = e.target.checked;
+      // Special logic for cyberneticsEnabled
+      if (prop === 'cyberneticsEnabled') {
+        const densityEl = document.getElementById('densityAdaptation');
+        if (e.target.checked) {
+          config.densityAdaptation = true;
+          if (densityEl) densityEl.checked = true;
+          if (cyberneticDashboard) {
+            cyberneticDashboard.isVisible = true;
+          }
+        } else {
+          config.densityAdaptation = false;
+          if (densityEl) densityEl.checked = false;
+          if (cyberneticDashboard) {
+            cyberneticDashboard.isVisible = false;
+          }
+        }
+      }
+      regenerate();
+    });
+  };
+
+  const bindSelect = (id, prop) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('change', e => {
+      config[prop] = e.target.value;
+      regenerate();
+    });
+  };
+
+  // Existing controls
   bindSlider('fieldScale', 'fieldScale', true, v => v);
   bindSlider('resolution', 'resolution', false);
   bindSlider('numPaths', 'numPaths', false);
   bindSlider('stepSize', 'stepSize', true);
   bindSlider('strokeWeight', 'strokeWeight', true);
 
+  // Phase 4 controls
+  bindCheckbox('multiLayerBlending', 'multiLayerBlending');
+  bindSlider('baseFieldWeight', 'baseFieldWeight', true);
+  bindSlider('secondaryFieldScale', 'secondaryFieldScale', true);
+  bindSlider('strokeWeightMultiplier', 'strokeWeightMultiplier', true);
+  bindCheckbox('colorDriftEnabled', 'colorDriftEnabled');
+  bindSlider('colorDriftAmount', 'colorDriftAmount', true);
+  bindSlider('repulsionStrength', 'repulsionStrength', true);
+  bindSlider('repulsionRadius', 'repulsionRadius', true);
+  bindSelect('variableStrokeMode', 'variableStrokeMode');
+
+  // Phase 5 controls
+  bindCheckbox('rdpSimplification', 'rdpSimplification');
+  bindSlider('rdpTolerance', 'rdpTolerance', true);
+  bindCheckbox('mergeCollinear', 'mergeCollinear');
+  bindSlider('coordinateRounding', 'coordinateRounding', false);
+  bindSelect('exportColorMode', 'exportColorMode');
+
+  // Phase 6 Cybernetic controls
+  bindCheckbox('cyberneticsEnabled', 'cyberneticsEnabled');
+  bindCheckbox('densityAdaptation', 'densityAdaptation');
+  bindSlider('adaptationRate', 'adaptationRate', true);
+  bindCheckbox('pheromoneTrails', 'pheromoneTrails');
+  bindSlider('pheromoneInfluence', 'pheromoneInfluence', true);
+  bindCheckbox('emergentAttractors', 'emergentAttractors');
+  bindCheckbox('temporalMemory', 'temporalMemory');
+  bindSlider('feedbackGain', 'feedbackGain', true);
+
   const seedInput = document.getElementById('seedInput');
   if (seedInput) {
     seedInput.addEventListener('input', e => {
       const value = e.target.value === '' ? null : parseInt(e.target.value, 10);
       config.seed = value;
-      displaySeed();
+      // Don't regenerate on every keystroke, just update the config
+      // User can press R or click Regenerate when ready
+    });
+    seedInput.addEventListener('change', e => {
+      // Regenerate when user finishes editing (blur or enter)
+      regenerate();
     });
   }
+  
+  const randomSeedBtn = document.getElementById('randomSeedBtn');
+  if (randomSeedBtn) randomSeedBtn.addEventListener('click', randomizeSeed);
   const noiseTypeSelect = document.getElementById('noiseTypeSelect');
   if (noiseTypeSelect) noiseTypeSelect.addEventListener('change', e => { config.noiseType = e.target.value; regenerate(); });
   const paletteSelect = document.getElementById('paletteSelect');
@@ -97,24 +208,79 @@ function setupUI() {
   const invertBtn = document.getElementById('invertColorsBtn');
   if (invertBtn) invertBtn.addEventListener('click', () => { toggleInvertColors(); });
 
-  document.getElementById('autoToggle').addEventListener('click', toggleAutoGenerate);
-  document.getElementById('toggleBtn').addEventListener('click', toggleSidebar);
+  // New button handlers
+  const addNegativeSpaceBtn = document.getElementById('addNegativeSpaceBtn');
+  if (addNegativeSpaceBtn) addNegativeSpaceBtn.addEventListener('click', addNegativeSpace);
+  const clearNegativeSpaceBtn = document.getElementById('clearNegativeSpaceBtn');
+  if (clearNegativeSpaceBtn) clearNegativeSpaceBtn.addEventListener('click', clearNegativeSpace);
+
+  const autoToggleBtn = document.getElementById('autoToggle');
+  if (autoToggleBtn) {
+    // Remove the onclick attribute to avoid conflicts
+    autoToggleBtn.removeAttribute('onclick');
+    autoToggleBtn.addEventListener('click', toggleAutoGenerate);
+  }
+  
+  const toggleBtn = document.getElementById('toggleBtn');
+  if (toggleBtn) toggleBtn.addEventListener('click', toggleSidebar);
+  
   document.getElementById('parameters');
-  document.querySelector('button[onclick="regenerate()"]')?.addEventListener('click', regenerate);
-  document.querySelector('button[onclick="downloadSVG()"]')?.addEventListener('click', downloadSVG);
-  document.querySelector('button[onclick="downloadCSV()"]')?.addEventListener('click', downloadCSV);
-  document.querySelector('button[onclick="downloadJSON()"]')?.addEventListener('click', downloadJSON);
+  
+  // Find buttons by text content since they don't have specific IDs
+  const regenerateBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Regenerate');
+  if (regenerateBtn) {
+    console.log('Regenerate button found and event listener added');
+    regenerateBtn.addEventListener('click', regenerate);
+  } else {
+    console.error('Regenerate button not found');
+  }
+  
+  const downloadSVGBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Download SVG');
+  if (downloadSVGBtn) {
+    console.log('Download SVG button found and event listener added');
+    downloadSVGBtn.addEventListener('click', downloadSVG);
+  } else {
+    console.error('Download SVG button not found');
+  }
+  
+  const downloadCSVBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Download CSV');
+  if (downloadCSVBtn) {
+    console.log('Download CSV button found and event listener added');
+    downloadCSVBtn.addEventListener('click', downloadCSV);
+  } else {
+    console.error('Download CSV button not found');
+  }
+  
+  const downloadJSONBtn = Array.from(document.querySelectorAll('button')).find(btn => btn.textContent.trim() === 'Download JSON');
+  if (downloadJSONBtn) {
+    console.log('Download JSON button found and event listener added');
+    downloadJSONBtn.addEventListener('click', downloadJSON);
+  } else {
+    console.error('Download JSON button not found');
+  }
 }
 
 function displaySeed() {
   const seedValue = document.getElementById('seedValue');
+  const seedInput = document.getElementById('seedInput');
   if (!seedValue) return;
+  
   if (config.seed == null && noiseFieldInstance?.seedUsed != null) {
     seedValue.textContent = `Random (${noiseFieldInstance.seedUsed})`;
+    // Update the input field to show the actual generated seed
+    if (seedInput) {
+      seedInput.value = noiseFieldInstance.seedUsed;
+    }
   } else if (config.seed == null) {
     seedValue.textContent = 'Random';
+    if (seedInput) {
+      seedInput.value = '';
+    }
   } else {
     seedValue.textContent = config.seed;
+    if (seedInput) {
+      seedInput.value = config.seed;
+    }
   }
 }
 
@@ -125,11 +291,26 @@ export function regenerate() {
 
 function randomizeSeed() {
   config.seed = null;
-  displaySeed();
   regenerate();
+  // After regeneration, set the config.seed to the actual seed that was used
+  // so that subsequent operations use the same seed until changed
+  if (noiseFieldInstance?.seedUsed != null) {
+    config.seed = noiseFieldInstance.seedUsed;
+  }
+  displaySeed();
 }
 
 function downloadSVG() {
+  console.log('downloadSVG called');
+  if (!paths || paths.length === 0) {
+    console.error('No paths available for SVG export');
+    return;
+  }
+  if (!noiseFieldInstance) {
+    console.error('No noise field instance available');
+    return;
+  }
+  
   const svg = exportSVG({ paths, config, seedUsed: noiseFieldInstance.seedUsed, paletteColors });
   const blob = new Blob([svg], { type: 'image/svg+xml' });
   const url = URL.createObjectURL(blob);
@@ -138,9 +319,16 @@ function downloadSVG() {
   a.download = 'plotter_flow_field.svg';
   a.click();
   URL.revokeObjectURL(url);
+  console.log('SVG download initiated');
 }
 
 function downloadCSV() {
+  console.log('downloadCSV called');
+  if (!paths || paths.length === 0) {
+    console.error('No paths available for CSV export');
+    return;
+  }
+  
   let csv = 'path_id,point_index,x,y\n';
   for (let i = 0; i < paths.length; i++) {
     for (let j = 0; j < paths[i].length; j++) {
@@ -154,9 +342,16 @@ function downloadCSV() {
   a.download = 'plotter_flow_field.csv';
   a.click();
   URL.revokeObjectURL(url);
+  console.log('CSV download initiated');
 }
 
 function downloadJSON() {
+  console.log('downloadJSON called');
+  if (!noiseFieldInstance) {
+    console.error('No noise field instance available');
+    return;
+  }
+  
   // Export only metadata & parameters (omit raw path coordinates per new requirement)
   const data = {
     metadata: {
@@ -175,6 +370,7 @@ function downloadJSON() {
   a.download = 'plotter_flow_field.json';
   a.click();
   URL.revokeObjectURL(url);
+  console.log('JSON download initiated');
 }
 
 function toggleAutoGenerate() {
@@ -218,9 +414,76 @@ function toggleInvertColors() {
   regenerate();
 }
 
+function addNegativeSpace() {
+  // This function is now used for the button-based random placement
+  // Mouse-based placement is handled by mouse events
+  const margin = 100; // Keep away from edges
+  const x = margin + Math.random() * (config.width - 2 * margin);
+  const y = margin + Math.random() * (config.height - 2 * margin);
+  const radius = 40 + Math.random() * 80; // 40-120 pixel radius
+  
+  if (!config.negativeSpaceMasks) {
+    config.negativeSpaceMasks = [];
+  }
+  
+  config.negativeSpaceMasks.push({
+    type: 'circle',
+    x: x,
+    y: y,
+    radius: radius
+  });
+  
+  // Update button text to show count
+  const button = document.getElementById('addNegativeSpaceBtn');
+  if (button) {
+    button.textContent = `Add Negative Space (${config.negativeSpaceMasks.length})`;
+  }
+  
+  regenerate();
+}
+
+function addNegativeSpaceAtMouse(x, y, radius) {
+  if (!config.negativeSpaceMasks) {
+    config.negativeSpaceMasks = [];
+  }
+  
+  config.negativeSpaceMasks.push({
+    type: 'circle',
+    x: x,
+    y: y,
+    radius: radius
+  });
+  
+  // Update button text to show count
+  const button = document.getElementById('addNegativeSpaceBtn');
+  if (button) {
+    button.textContent = `Add Negative Space (${config.negativeSpaceMasks.length})`;
+  }
+  
+  regenerate();
+}
+
+function clearNegativeSpace() {
+  config.negativeSpaceMasks = [];
+  
+  // Reset button text
+  const button = document.getElementById('addNegativeSpaceBtn');
+  if (button) {
+    button.textContent = 'Add Negative Space Circle';
+  }
+  
+  regenerate();
+}
+
 // Keyboard shortcuts bridging (similar to legacy)
 function keyPressed(p) {
   const k = p.key;
+  
+  // Check cybernetic dashboard first
+  if (cyberneticDashboard && cyberneticDashboard.handleKeyPress(k)) {
+    return; // Dashboard handled the key
+  }
+  
   if (/r/i.test(k)) regenerate();
   else if (/s/i.test(k)) downloadSVG();
   else if (/c/i.test(k)) downloadCSV();
@@ -238,7 +501,66 @@ new window.p5(p => {
     setupUI();
     regenerate();
   };
-  p.draw = () => { /* no continuous draw; rendering on regenerate */ };
+  p.draw = () => { 
+    // Render cybernetic visualizations if enabled
+    if (cyberneticDashboard && config.cyberneticsEnabled) {
+      cyberneticDashboard.renderDensityVisualization();
+      cyberneticDashboard.render();
+    }
+    
+    // Show preview of current negative space being created
+    if (mousePressed && currentNegativeSpace) {
+      p.push();
+      p.fill(128, 128, 128, 100);
+      p.stroke(128);
+      p.strokeWeight(2);
+      p.ellipse(currentNegativeSpace.x, currentNegativeSpace.y, 
+                currentNegativeSpace.radius * 2, currentNegativeSpace.radius * 2);
+      p.pop();
+    }
+  };
+  
+  // Mouse event handlers for negative space creation
+  p.mousePressed = () => {
+    // Check if mouse is over the canvas
+    if (p.mouseX >= 0 && p.mouseX <= config.width && 
+        p.mouseY >= 0 && p.mouseY <= config.height) {
+      mousePressed = true;
+      mousePressStart = p.millis();
+      currentNegativeSpace = {
+        x: p.mouseX,
+        y: p.mouseY,
+        radius: 10 // Start small
+      };
+      return false; // Prevent default behavior
+    }
+  };
+  
+  p.mouseDragged = () => {
+    if (mousePressed && currentNegativeSpace) {
+      // Update radius based on hold time
+      const holdTime = p.millis() - mousePressStart;
+      const maxRadius = 150; // Maximum radius
+      const growthRate = 0.1; // Pixels per millisecond
+      currentNegativeSpace.radius = Math.min(maxRadius, 10 + holdTime * growthRate);
+    }
+  };
+  
+  p.mouseReleased = () => {
+    if (mousePressed && currentNegativeSpace) {
+      // Add the negative space to the config
+      addNegativeSpaceAtMouse(
+        currentNegativeSpace.x, 
+        currentNegativeSpace.y, 
+        currentNegativeSpace.radius
+      );
+      
+      mousePressed = false;
+      currentNegativeSpace = null;
+      return false; // Prevent default behavior
+    }
+  };
+  
   p.keyPressed = () => keyPressed(p);
 });
 
@@ -252,3 +574,5 @@ window.toggleAutoGenerate = toggleAutoGenerate;
 window.toggleSidebar = toggleSidebar;
 window.flipBackground = flipBackground;
 window.toggleInvertColors = toggleInvertColors;
+window.addNegativeSpace = addNegativeSpace;
+window.clearNegativeSpace = clearNegativeSpace;
