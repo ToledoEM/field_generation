@@ -1,7 +1,6 @@
 # Flow Field Art Creator
 
-A pen plotter-ready generative art piece that creates organic, flowing lines using Perlin noise-based vector fields.
-
+A sophisticated pen plotter-ready generative art tool that creates organic, flowing lines using advanced noise-based vector fields with multi-layer blending, variable stroke properties, and intelligent negative space avoidance.
 
 <p align="center">
   <img src="img/gui.png" alt="GUI"  width="600">
@@ -9,9 +8,9 @@ A pen plotter-ready generative art piece that creates organic, flowing lines usi
 
 ## Overview
 
-This project uses flowing patterns to guide virtual particles across your canvas, creating curves and paths. You can save your creation as an SVG file for pen plotters and laser cutters, or grab it as a JSON/CSV file to plot this anywhere.
+This project uses flowing patterns to guide virtual particles across your canvas, creating curves and paths with control and sophistication. The system now features multi-layer field blending, variable stroke weights and transparency, per-path color drift, negative space repulsion, and advanced export optimizations. You can save your creation as an optimized SVG file for pen plotters and laser cutters, or grab it as JSON/CSV files for analysis and plotting anywhere.
 
-Created with processing 4 and p5.js
+Created with p5.js and modern ES modules for enhanced modularity and performance.
 
 ## Motivation
 
@@ -88,14 +87,112 @@ for (let j = 0; j < RESOLUTION; j++) {
 
 ### Key Parameters
 
+#### Core Flow Field Parameters
+
 | Parameter | Effect | Range |
 |-----------|--------|-------|
 | **Field Scale** | Controls the "wavelength" of the noise. Smaller = smoother flows | 0.001 - 0.02 |
 | **Resolution** | Number of steps each particle takes (path length) | 10 - 100 |
-| **Number of Paths** | Total particles/lines drawn | 100 - 2000 |
-| **Step Size** | Distance traveled per step AND grid cell size | 1 - 10 |
-| **Stroke Weight** | Line thickness in the output | 0.1 - 3.0 |
-| **Seed** | Initializes the Perlin noise generator for reproducible results | Any integer |
+| **Number of Paths** | Total particles/lines drawn | 100 - 7000 |
+| **Step Size** | Distance traveled per step AND grid cell size | 1 - 50 |
+| **Stroke Weight** | Base line thickness in the output | 0.1 - 3.0 |
+| **Seed** | Initializes the noise generator for reproducible results | Any integer |
+
+#### Advanced Field Options (Phase 4)
+
+| Parameter | Effect | Range |
+|-----------|--------|-------|
+| **Multi-Layer Blending** | Combines base field with secondary high-frequency field | On/Off |
+| **Base Field Weight** | Influence strength of primary noise field | 0.1 - 1.0 |
+| **Secondary Field Scale** | Frequency of secondary field (higher = more detail) | 0.005 - 0.05 |
+
+#### Stroke Variations (Phase 4)
+
+| Parameter | Effect | Options |
+|-----------|--------|---------|
+| **Variable Stroke Mode** | How stroke properties change along paths | None, Weight by Curvature, Weight Taper, Alpha by Curvature, Alpha Taper |
+| **Stroke Weight Multiplier** | Intensity of weight variations | 1.0 - 5.0 |
+| **Color Drift** | Subtle color shifts along path lifetime | On/Off |
+| **Color Drift Amount** | Strength of color variation | 0.0 - 0.5 |
+
+#### Negative Space Repulsion (Phase 4)
+
+| Parameter | Effect | Range |
+|-----------|--------|-------|
+| **Repulsion Strength** | How strongly particles avoid negative space | 0.5 - 10.0 |
+| **Repulsion Radius Multiplier** | How far repulsion field extends beyond circle | 1.0 - 3.0 |
+
+#### Export Optimizations (Phase 5)
+
+| Parameter | Effect | Range/Options |
+|-----------|--------|---------------|
+| **RDP Simplification** | Reduces point count while preserving shape | On/Off |
+| **RDP Tolerance** | Aggressiveness of simplification | 0.1 - 2.0 |
+| **Merge Collinear** | Removes unnecessary points on straight lines | On/Off |
+| **Coordinate Precision** | Decimal places for coordinates | 1 - 4 |
+| **Export Color Mode** | How colors are organized in SVG | Palette, Monochrome, Per-Layer |
+
+## Advanced Features
+
+### Multi-Layer Field Blending
+
+The system can now blend two noise fields at different frequencies to create more complex, natural-looking flow patterns:
+
+```javascript
+// Primary field (smooth, large-scale flow)
+const baseAngle = noise(x * baseFieldScale, y * baseFieldScale) * TWO_PI * 4;
+const baseVector = p5.Vector.fromAngle(baseAngle);
+
+// Secondary field (detailed, high-frequency turbulence)  
+const secondaryAngle = noise(x * secondaryFieldScale, y * secondaryFieldScale) * TWO_PI * 4;
+const secondaryVector = p5.Vector.fromAngle(secondaryAngle);
+
+// Weighted combination
+const combinedVector = baseVector.mult(baseWeight).add(secondaryVector.mult(secondaryWeight));
+```
+
+This creates flow fields that have both large-scale structure and fine-scale detail, similar to real fluid dynamics.
+
+### Variable Stroke Properties
+
+Each path segment can now have different visual properties:
+
+- **Weight by Curvature**: Lines get thicker in areas of high directional change, emphasizing turbulent regions
+- **Weight Taper**: Lines gradually thin from start to end, creating organic, natural endpoints  
+- **Alpha by Curvature**: Transparency varies with path curvature for subtle depth effects
+- **Alpha Taper**: Lines fade out gradually, eliminating harsh path endings
+
+### Negative Space Repulsion
+
+Particles now intelligently avoid user-defined circular areas through a sophisticated force field system:
+
+```javascript
+// Calculate repulsion force from negative space
+const distance = sqrt((x - maskX)² + (y - maskY)²);
+const repulsionRadius = maskRadius * radiusMultiplier;
+
+if (distance < repulsionRadius) {
+  const strength = (repulsionRadius - distance) / repulsionRadius;
+  const force = (direction_away_from_center) * strength² * repulsionStrength;
+  
+  // Combine with flow field force
+  particle.velocity = flowForce + repulsionForce;
+}
+```
+
+This creates natural-looking deflection around obstacles, like water flowing around rocks.
+
+### Export Optimizations
+
+The SVG export system now includes several optimization options:
+
+- **RDP Simplification**: Uses the Ramer-Douglas-Peucker algorithm to reduce file size while preserving visual quality
+- **Collinear Merging**: Removes redundant points on straight line segments
+- **Coordinate Rounding**: Reduces precision to eliminate floating-point artifacts
+- **Color Modes**: 
+  - Palette: Standard grouped colors
+  - Monochrome: All black for pen plotting
+  - Per-Layer: Separate SVG groups for each color
 
 ### Algorithm Flow
 
@@ -214,17 +311,56 @@ You can decode this to reconstruct the configuration.
 ## File Structure
 
 ```
-├── index.html      # HTML interface with controls
-├── flowfields.js   # Core flow field generation logic
-└── README.md       # This file
+├── index.html                    # HTML interface with controls
+├── package.json                  # Node.js dependencies and scripts
+├── ROADMAP.md                   # Development phases and features
+├── README.md                    # This documentation
+├── flowfields.js                # Legacy compatibility (deprecated)
+├── libraries/
+│   ├── p5.min.js               # p5.js creative coding library
+│   └── simplex-noise.js        # Simplex noise implementation
+└── src/                        # Modern ES modules architecture
+    ├── index.js                # Main orchestration and UI wiring
+    ├── config/
+    │   └── defaultConfig.js    # Configuration defaults and validation
+    ├── field/
+    │   └── NoiseField.js       # Flow field generation with multi-layer support
+    ├── sim/
+    │   └── ParticleSimulator.js # Particle physics with repulsion and stroke variations
+    ├── render/
+    │   └── CanvasRenderer.js   # Canvas drawing with advanced visual effects
+    ├── export/
+    │   ├── SVGExporter.js      # SVG generation with optimization options
+    │   └── GeometryUtils.js    # RDP simplification and geometry utilities
+    └── palette/
+        └── palettes.js         # Color palette definitions
 ```
 
 ## Tips for Best Results
 
+### Basic Flow Patterns
 - **For organic, flowing patterns**: Use low field scale (0.002-0.005) and high resolution (50-100)
 - **For chaotic, energetic patterns**: Use high field scale (0.01-0.02) and low step size (2-3)
 - **For plotter efficiency**: Lower the number of paths to reduce plotting time
 - **For fine details**: Increase resolution but decrease stroke weight
+
+### Advanced Techniques
+- **Multi-layer complexity**: Enable multi-layer blending with base weight 0.7, secondary scale 0.015-0.025
+- **Natural stroke variation**: Use "Alpha Taper" or "Weight Taper" for organic line endings
+- **Subtle color effects**: Enable color drift with amount 0.05-0.15 for gentle variation
+- **Obstacle avoidance**: Add 2-3 negative space circles with repulsion strength 2.0-4.0
+
+### Export Optimization
+- **For plotting**: Enable RDP simplification (tolerance 0.3-0.7) and use monochrome export mode  
+- **For cutting**: Use coordinate precision 2, enable collinear merging
+- **For large files**: Use higher RDP tolerance (1.0+) to reduce point count significantly
+- **For print**: Use per-layer export mode for easier color management in design software
+
+### Creative Combinations
+- **Turbulent atmosphere**: Multi-layer ON + curvature-based alpha + negative space for realistic fluid simulation
+- **Organic growth**: Weight taper + color drift + low field scale for plant-like structures  
+- **Technical drawings**: Monochrome + RDP simplification + uniform stroke for clean, precise plots
+- **Artistic prints**: Per-layer export + alpha variations + multiple palettes for complex color compositions
 
 ## Visualizing with R
 
