@@ -1,5 +1,7 @@
 # Flowfield CLI
 
+**This is under heavy testing an development in any free time**
+
 Generate flow field art from the command line. Outputs SVG / JSON / CSV (only CSV is gzip-compressed when compression is enabled) and a raster PNG (pure JS, no native build). Includes all web methods, multi-source radial & spiral, palette gradients, and deterministic seeded noise.
 
 ## Install

@@ -3,6 +3,7 @@
  * Quantized Angle Flow Field Generator
  * * Modified to round the Perlin noise angle to the nearest pi/4 increment,
  * creating a geometric, grid-like flow effect using continuous paths.
+ * Heavy calculations now not in a single core - hybrid approach 
  */
 
 let FIELD_SCALE = 0.005;
@@ -16,6 +17,16 @@ let FIELD_METHOD = "quantizedPerlin";
 let AUTO_REGENERATE = false;
 let METHOD_PARAMS = {}; // runtime parameter values per method
 let METHOD_SOURCES = {}; // per-method array of source points for multi-source behaviors
+let rdCache = null;
+let licCache = null;
+const SEEDED_METHODS = new Set([
+  "quantizedPerlin",
+  "perlin",
+  "curlLike",
+  "signedQuantized",
+  "reactionDiffusion",
+  "lineIntegralConvolution",
+]);
 let INTERACTION_PARAMS = {
   repelEnabled: false,
   repelRadius: 40, // pixel radius for neighbor consideration
@@ -29,11 +40,18 @@ let BUCKET_SIZE = 40; // tie to repelRadius default
 let field = [];
 let columns, rows;
 let paths = [];
+let SEED_MODE = "auto";
 
-// NEW: Generation state for chunking and cancellation
-let isGenerationCancelled = false;
-let pathIndex = 0; // Tracks which path we are currently drawing
-const PATHS_PER_CHUNK = 50; // Number of paths to process before yielding control
+// Hybrid parallelization state
+const NUM_WORKERS =
+  (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 4;
+let workers = [];
+let activeGenerationToken = 0;
+let pendingWorkerCount = 0;
+let completedPathCount = 0;
+let rawPathBuffers = [];
+let lastFieldBuffer = null;
+let pathSeedBase = 0;
 
 // New: Aspect Ratio Definitions
 const ASPECT_RATIOS = [
@@ -45,373 +63,368 @@ const ASPECT_RATIOS = [
   { name: "A4/Letter Portrait (~1:1.41)", w: 600, h: 848, value: "A4P" },
 ];
 
-// Registry of field generation strategies
-// ... (FIELD_METHODS remains unchanged) ...
-const FIELD_METHODS = {
-  quantizedPerlin: {
-    name: "Quantized Perlin",
-    description: "Perlin noise angle rounded to 45° increments.",
-    params: {
-      quantumDivisions: {
-        label: "Divisions (per 360°)",
-        type: "range",
-        min: 4,
-        max: 32,
-        step: 1,
-        default: 8,
-      },
-      angleMultiplier: {
-        label: "Angle Noise Mult",
-        type: "range",
-        min: 1,
-        max: 10,
-        step: 0.5,
-        default: 4,
-      },
-      jitter: {
-        label: "Angle Jitter",
-        type: "range",
-        min: 0,
-        max: 0.5,
-        step: 0.01,
-        default: 0,
-      },
-    },
-    generate: ({ xoff, yoff }) => {
-      const divisions = METHOD_PARAMS.quantizedPerlin.quantumDivisions;
-      const quantumAngle = TWO_PI / divisions;
-      let noiseVal =
-        noise(xoff, yoff) *
-        TWO_PI *
-        METHOD_PARAMS.quantizedPerlin.angleMultiplier;
-      let angle = noiseVal % TWO_PI;
-      angle = round(angle / quantumAngle) * quantumAngle;
-      angle += random(
-        -METHOD_PARAMS.quantizedPerlin.jitter,
-        METHOD_PARAMS.quantizedPerlin.jitter,
-      );
-      return p5.Vector.fromAngle(angle);
-    },
-  },
-  perlin: {
-    name: "Smooth Perlin",
-    description: "Standard smooth Perlin-based angle.",
-    params: {
-      angleScale: {
-        label: "Angle Scale",
-        type: "range",
-        min: 0.5,
-        max: 6,
-        step: 0.1,
-        default: 2,
-      },
-      rotationOffset: {
-        label: "Rotation Offset",
-        type: "range",
-        min: -Math.PI,
-        max: Math.PI,
-        step: 0.01,
-        default: 0,
-      },
-    },
-    generate: ({ xoff, yoff }) => {
-      let angle =
-        noise(xoff, yoff) * TWO_PI * METHOD_PARAMS.perlin.angleScale +
-        METHOD_PARAMS.perlin.rotationOffset;
-      return p5.Vector.fromAngle(angle);
-    },
-  },
-  signedQuantized: {
-    name: "Signed Quantized 45°",
-    description:
-      "Noise mapped to [-π, π] then snapped to 45° increments for stark geometric flow.",
-    params: {
-      jitter: {
-        label: "Angle Jitter",
-        type: "range",
-        min: 0,
-        max: 0.4,
-        step: 0.01,
-        default: 0,
-      },
-      invert: { label: "Invert Direction", type: "checkbox", default: false },
-    },
-    generate: ({ xoff, yoff }) => {
-      let n = noise(xoff, yoff); // 0..1
-      let angle = PI * (2 * n - 1); // -PI .. PI
-      const quantum = PI / 4; // 45° quantization
-      angle = round(angle / quantum) * quantum;
-      angle += random(
-        -METHOD_PARAMS.signedQuantized.jitter,
-        METHOD_PARAMS.signedQuantized.jitter,
-      );
-      if (METHOD_PARAMS.signedQuantized.invert) angle += PI; // flip direction
-      return p5.Vector.fromAngle(angle);
-    },
-  },
-  curlLike: {
-    name: "Pseudo Curl",
-    description: "Finite-difference derivative of Perlin to emulate curl flow.",
-    params: {
-      epsilon: {
-        label: "Derivative ε",
-        type: "range",
-        min: 0.001,
-        max: 0.05,
-        step: 0.001,
-        default: 0.01,
-      },
-      strength: {
-        label: "Vector Strength",
-        type: "range",
-        min: 0.5,
-        max: 5,
-        step: 0.1,
-        default: 1.2,
-      },
-    },
-    generate: ({ xoff, yoff }) => {
-      const e = METHOD_PARAMS.curlLike.epsilon;
-      const n1 = noise(xoff, yoff + e);
-      const n2 = noise(xoff, yoff - e);
-      const n3 = noise(xoff + e, yoff);
-      const n4 = noise(xoff - e, yoff);
-      const dx = (n1 - n2) / (2 * e);
-      const dy = (n3 - n4) / (2 * e);
-      let v = createVector(-dy, dx);
-      v.normalize().mult(METHOD_PARAMS.curlLike.strength);
-      return v;
-    },
-  },
-  radialCenter: {
-    name: "Radial (Inward)",
-    description: "Vectors point towards canvas center.",
-    params: {
-      inward: { label: "Inward vs Outward", type: "checkbox", default: true },
-      falloff: {
-        label: "Distance Falloff",
-        type: "range",
-        min: 0,
-        max: 2,
-        step: 0.05,
-        default: 0.5,
-      },
-      sourcesCount: {
-        label: "Sources Count",
-        type: "range",
-        min: 1,
-        max: 12,
-        step: 1,
-        default: 1,
-      },
-      distribution: {
-        label: "Distribution",
-        type: "select",
-        options: ["random", "grid", "circle"],
-        default: "random",
-      },
-      blendMode: {
-        label: "Blend Mode",
-        type: "select",
-        options: ["closest", "average", "weighted"],
-        default: "weighted",
-      },
-    },
-    generate: ({ i, j }) => {
-      const sources = METHOD_SOURCES.radialCenter || [];
-      if (sources.length === 0) return createVector(0, 0);
-      const inward = METHOD_PARAMS.radialCenter.inward;
-      const falloff = METHOD_PARAMS.radialCenter.falloff;
-      const mode = METHOD_PARAMS.radialCenter.blendMode;
-      let accum = createVector(0, 0);
-      let weightsTotal = 0;
-      let closestV = null;
-      let closestD = Infinity;
-      sources.forEach((s) => {
-        let v = createVector(s.x - i, s.y - j);
-        let d = v.mag();
-        if (d < 0.001) d = 0.001;
-        v.normalize();
-        if (!inward) v.mult(-1);
-        let maxD = dist(0, 0, columns, rows);
-        let scale = 1 - (d / maxD) * falloff;
-        if (scale < 0) scale = 0;
-        v.mult(scale);
-        if (mode === "closest") {
-          if (d < closestD) {
-            closestD = d;
-            closestV = v;
-          }
-        } else if (mode === "average") {
-          accum.add(v);
-        } else {
-          // weighted
-          let w = 1 / (d + 0.001);
-          accum.add(p5.Vector.mult(v, w));
-          weightsTotal += w;
+// Registry of field generation strategies (defined in field-methods.js)
+const FIELD_METHODS = buildFieldMethods();
+
+function invalidateCachesForMethod(method) {
+  if (method === "reactionDiffusion") rdCache = null;
+  if (method === "lineIntegralConvolution") licCache = null;
+}
+
+function invalidateAllCaches() {
+  rdCache = null;
+  licCache = null;
+}
+
+function makeMulberry32(seed) {
+  let t = seed >>> 0;
+  return function mulberry() {
+    t += 0x6d2b79f5;
+    let r = Math.imul(t ^ (t >>> 15), t | 1);
+    r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
+    return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function simulateReactionDiffusion(cols, rows, params, seed) {
+  const {
+    feedRate,
+    killRate,
+    diffusionA,
+    diffusionB,
+    iterations,
+    patternSeed,
+  } = params;
+
+  const total = cols * rows;
+  let gridA = new Float32Array(total);
+  let gridB = new Float32Array(total);
+  let nextA = new Float32Array(total);
+  let nextB = new Float32Array(total);
+
+  gridA.fill(1.0);
+  gridB.fill(0.0);
+
+  const rand = makeMulberry32(seed >>> 0);
+  const seedCount = Math.max(1, Math.floor(patternSeed));
+
+  for (let s = 0; s < seedCount; s++) {
+    const seedX = Math.floor((cols * 0.4) * rand() + cols * 0.3);
+    const seedY = Math.floor((rows * 0.4) * rand() + rows * 0.3);
+    const radius = Math.floor(3 + rand() * 5);
+    for (let dy = -radius; dy <= radius; dy++) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (dx * dx + dy * dy <= radius * radius) {
+          const sx = (seedX + dx + cols) % cols;
+          const sy = (seedY + dy + rows) % rows;
+          const idx = sy * cols + sx;
+          gridB[idx] = 1.0;
+          gridA[idx] = 0.0;
         }
-      });
-      let out;
-      if (mode === "closest") out = closestV || accum;
-      else if (mode === "average") {
-        out = accum.div(sources.length);
-      } else {
-        out = weightsTotal > 0 ? accum.div(weightsTotal) : accum;
       }
-      return out;
-    },
-  },
-  spiral: {
-    name: "Spiral",
-    description: "Combines radial and tangential components for a spiral.",
-    params: {
-      inwardness: {
-        label: "Inwardness",
-        type: "range",
-        min: 0,
-        max: 1,
-        step: 0.05,
-        default: 0.6,
-      },
-      twist: {
-        label: "Twist",
-        type: "range",
-        min: 0,
-        max: 3,
-        step: 0.05,
-        default: 1,
-      },
-      arms: {
-        label: "Spiral Arms",
-        type: "range",
-        min: 1,
-        max: 12,
-        step: 1,
-        default: 4,
-      },
-      armSharpness: {
-        label: "Arm Sharpness",
-        type: "range",
-        min: 0,
-        max: 1,
-        step: 0.05,
-        default: 0.4,
-      },
-      sourcesCount: {
-        label: "Sources Count",
-        type: "range",
-        min: 1,
-        max: 12,
-        step: 1,
-        default: 1,
-      },
-      distribution: {
-        label: "Distribution",
-        type: "select",
-        options: ["random", "ring", "grid"],
-        default: "ring",
-      },
-      rotationDir: {
-        label: "Rotation Dir",
-        type: "select",
-        options: ["auto", "cw", "ccw"],
-        default: "auto",
-      },
-    },
-    generate: ({ i, j }) => {
-      const sources = METHOD_SOURCES.spiral || [];
-      if (sources.length === 0) return createVector(0, 0);
-      let inwardness = METHOD_PARAMS.spiral.inwardness;
-      let twist = METHOD_PARAMS.spiral.twist;
-      let arms = METHOD_PARAMS.spiral.arms;
-      let sharp = METHOD_PARAMS.spiral.armSharpness;
-      let rotDirSetting = METHOD_PARAMS.spiral.rotationDir;
-      let accum = createVector(0, 0);
-      sources.forEach((s) => {
-        let local = createVector(i - s.x, j - s.y);
-        let mag = local.mag();
-        if (mag < 0.5) return; // ignore near-source singularity
-        let radial = local.copy().normalize();
-        let tangential = createVector(-radial.y, radial.x);
-        // rotation direction logic
-        let useTangential = tangential;
-        if (rotDirSetting !== "auto") {
-          const sign = rotDirSetting === "cw" ? 1 : -1;
-          useTangential = createVector(
-            sign * tangential.x,
-            sign * tangential.y,
-          );
-        } else {
-          // auto decides based on source index parity for variety
-          let idx = sources.indexOf(s);
-          if (idx % 2 === 1) useTangential.mult(-1);
-        }
-        let mix = inwardness; // radial weight
-        let armFactor = sin(radial.heading() * arms + mag * twist);
-        armFactor = pow(abs(armFactor), sharp);
-        let v = p5.Vector.lerp(useTangential, radial.mult(-1), mix);
-        v.normalize().mult(1 + armFactor * 0.8);
-        // Distance attenuation so multiple sources blend
-        let attenuation = 1 / (1 + mag * 0.02);
-        accum.add(v.mult(attenuation));
-      });
-      accum.normalize();
-      return accum;
-    },
-  },
-  sineWaves: {
-    name: "Sine Waves",
-    description: "Angle modulated by combined sin/cos of grid.",
-    params: {
-      freqX: {
-        label: "Frequency X",
-        type: "range",
-        min: 0.05,
-        max: 1,
-        step: 0.01,
-        default: 0.15,
-      },
-      freqY: {
-        label: "Frequency Y",
-        type: "range",
-        min: 0.05,
-        max: 1,
-        step: 0.01,
-        default: 0.21,
-      },
-      directionMode: {
-        label: "Direction Mode",
-        type: "select",
-        options: ["both", "vertical", "horizontal", "diagonal"],
-        default: "both",
-      },
-      amplitude: {
-        label: "Amplitude",
-        type: "range",
-        min: 0.2,
-        max: 3,
-        step: 0.1,
-        default: 1,
-      },
-    },
-    generate: ({ i, j }) => {
-      let fx = METHOD_PARAMS.sineWaves.freqX;
-      let fy = METHOD_PARAMS.sineWaves.freqY;
-      let base = sin(i * fx) + cos(j * fy);
-      let mode = METHOD_PARAMS.sineWaves.directionMode;
-      let angle = base;
-      if (mode === "vertical")
-        angle = sin(j * fy) * METHOD_PARAMS.sineWaves.amplitude;
-      else if (mode === "horizontal")
-        angle = cos(i * fx) * METHOD_PARAMS.sineWaves.amplitude;
-      else if (mode === "diagonal")
-        angle =
-          sin((i + j) * (fx + fy) * 0.5) * METHOD_PARAMS.sineWaves.amplitude;
-      else angle = base * METHOD_PARAMS.sineWaves.amplitude;
-      return p5.Vector.fromAngle(angle);
-    },
-  },
-};
+    }
+  }
+
+  const dt = 1.0;
+  const totalIterations = Math.max(1, Math.floor(iterations));
+  for (let iter = 0; iter < totalIterations; iter++) {
+    for (let y = 0; y < rows; y++) {
+      const yUp = (y - 1 + rows) % rows;
+      const yDown = (y + 1) % rows;
+      for (let x = 0; x < cols; x++) {
+        const idx = y * cols + x;
+        const xLeft = (x - 1 + cols) % cols;
+        const xRight = (x + 1) % cols;
+
+        const a = gridA[idx];
+        const b = gridB[idx];
+
+        const laplaceA =
+          gridA[y * cols + xLeft] +
+          gridA[y * cols + xRight] +
+          gridA[yUp * cols + x] +
+          gridA[yDown * cols + x] -
+          4 * a;
+        const laplaceB =
+          gridB[y * cols + xLeft] +
+          gridB[y * cols + xRight] +
+          gridB[yUp * cols + x] +
+          gridB[yDown * cols + x] -
+          4 * b;
+
+        const reaction = a * b * b;
+        let nextAval =
+          a + (diffusionA * laplaceA - reaction + feedRate * (1 - a)) * dt;
+        let nextBval =
+          b + (diffusionB * laplaceB + reaction - (killRate + feedRate) * b) * dt;
+
+        if (nextAval < 0) nextAval = 0;
+        else if (nextAval > 1) nextAval = 1;
+        if (nextBval < 0) nextBval = 0;
+        else if (nextBval > 1) nextBval = 1;
+
+        nextA[idx] = nextAval;
+        nextB[idx] = nextBval;
+      }
+    }
+
+    [gridA, nextA] = [nextA, gridA];
+    [gridB, nextB] = [nextB, gridB];
+  }
+
+  return { gridA, gridB };
+}
+
+function computeReactionDiffusionConcentration(mode, cache) {
+  if (!cache) return null;
+  const { cols, rows, gridA, gridB } = cache;
+  if (mode === "chemicalB") return gridB;
+
+  const total = cols * rows;
+  if (mode === "difference") {
+    const diff = new Float32Array(total);
+    for (let i = 0; i < total; i++) {
+      diff[i] = gridB[i] - gridA[i];
+    }
+    return diff;
+  }
+
+  if (mode === "laplacian") {
+    const lap = new Float32Array(total);
+    for (let y = 0; y < rows; y++) {
+      const yUp = (y - 1 + rows) % rows;
+      const yDown = (y + 1) % rows;
+      for (let x = 0; x < cols; x++) {
+        const xLeft = (x - 1 + cols) % cols;
+        const xRight = (x + 1) % cols;
+        const idx = y * cols + x;
+        const b = gridB[idx];
+        lap[idx] =
+          gridB[y * cols + xLeft] +
+          gridB[y * cols + xRight] +
+          gridB[yUp * cols + x] +
+          gridB[yDown * cols + x] -
+          4 * b;
+      }
+    }
+    return lap;
+  }
+
+  return gridB;
+}
+
+function ensureReactionDiffusionData(cols, rows, params) {
+  const gradientMode = params.gradientMode || "chemicalB";
+  const key = JSON.stringify({
+    cols,
+    rows,
+    feedRate: params.feedRate,
+    killRate: params.killRate,
+    diffusionA: params.diffusionA,
+    diffusionB: params.diffusionB,
+    iterations: params.iterations,
+    patternSeed: params.patternSeed,
+    seed: ACTUAL_SEED ?? 0,
+  });
+
+  if (!rdCache || rdCache.key !== key) {
+    if (params.iterations > 2000) {
+      console.log("Running Reaction-Diffusion simulation — this may take a moment...");
+    }
+    const seed = (ACTUAL_SEED ?? 0) ^ 0x9e3779b9;
+    const { gridA, gridB } = simulateReactionDiffusion(cols, rows, params, seed);
+    rdCache = {
+      key,
+      cols,
+      rows,
+      gridA,
+      gridB,
+      concentrationMaps: {},
+    };
+  }
+
+  if (!rdCache.concentrationMaps[gradientMode]) {
+    rdCache.concentrationMaps[gradientMode] = computeReactionDiffusionConcentration(
+      gradientMode,
+      rdCache,
+    );
+  }
+
+  return {
+    cols: rdCache.cols,
+    rows: rdCache.rows,
+    gridA: rdCache.gridA,
+    gridB: rdCache.gridB,
+    concentration: rdCache.concentrationMaps[gradientMode],
+  };
+}
+
+function buildBaseFieldVectors(methodKey, cols, rows, scale) {
+  const vectors = new Array(cols * rows);
+  const method = FIELD_METHODS[methodKey];
+  if (!method) {
+    for (let idx = 0; idx < vectors.length; idx++) {
+      vectors[idx] = createVector(1, 0);
+    }
+    return vectors;
+  }
+
+  ensureSourcesForMethod(methodKey);
+
+  let xoff = 0;
+  for (let i = 0; i < cols; i++) {
+    let yoff = 0;
+    for (let j = 0; j < rows; j++) {
+      const idx = i + j * cols;
+      let vec;
+      try {
+        vec = method.generate({ i, j, xoff, yoff, cols, rows });
+      } catch (err) {
+        console.error("Base field generation failed", err);
+        vec = createVector(1, 0);
+      }
+      if (!vec || !Number.isFinite(vec.x) || !Number.isFinite(vec.y)) {
+        vec = createVector(1, 0);
+      }
+      vectors[idx] = vec.copy ? vec.copy() : createVector(vec.x, vec.y);
+      yoff += scale;
+    }
+    xoff += scale;
+  }
+  return vectors;
+}
+
+function computeLICTexture(cols, rows, baseField, params) {
+  const total = cols * rows;
+  const licTexture = new Float32Array(total);
+  const noiseTexture = new Float32Array(total);
+  const seed = (ACTUAL_SEED ?? 0) ^ 0xdecafbad;
+  const rand = makeMulberry32(seed >>> 0);
+  const texScale = Math.max(0.5, params.textureResolution || 1);
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const idx = y * cols + x;
+      noiseTexture[idx] = rand();
+    }
+  }
+
+  let kernelSize = Math.max(3, Math.floor(params.kernelSize));
+  if (kernelSize % 2 === 0) kernelSize += 1;
+  const halfKernel = Math.floor(kernelSize / 2);
+  const kernel = new Float32Array(kernelSize);
+  const sigma = kernelSize / 6;
+  let kernelSum = 0;
+  for (let k = 0; k < kernelSize; k++) {
+    const x = k - halfKernel;
+    const val = Math.exp(-(x * x) / (2 * sigma * sigma));
+    kernel[k] = val;
+    kernelSum += val;
+  }
+  for (let k = 0; k < kernelSize; k++) {
+    kernel[k] /= kernelSum;
+  }
+
+  const stepLength = Math.max(0.5, params.streamlineLength / kernelSize);
+
+  const sampleNoise = (px, py) => {
+    const sx = ((Math.floor(px * texScale) % cols) + cols) % cols;
+    const sy = ((Math.floor(py * texScale) % rows) + rows) % rows;
+    return noiseTexture[sy * cols + sx];
+  };
+
+  for (let y = 0; y < rows; y++) {
+    for (let x = 0; x < cols; x++) {
+      const idx = y * cols + x;
+      const baseVec = baseField[idx];
+      let dirX = baseVec ? baseVec.x : 1;
+      let dirY = baseVec ? baseVec.y : 0;
+      let length = Math.hypot(dirX, dirY);
+      if (length < 1e-5) length = 1;
+      dirX = (dirX / length) * stepLength;
+      dirY = (dirY / length) * stepLength;
+
+      let accum = noiseTexture[idx] * kernel[halfKernel];
+      let weight = kernel[halfKernel];
+
+      let px = x;
+      let py = y;
+      for (let step = 1; step <= halfKernel; step++) {
+        px += dirX;
+        py += dirY;
+        const sample = sampleNoise(px, py);
+        const w = kernel[halfKernel + step];
+        accum += sample * w;
+        weight += w;
+      }
+
+      px = x;
+      py = y;
+      for (let step = 1; step <= halfKernel; step++) {
+        px -= dirX;
+        py -= dirY;
+        const sample = sampleNoise(px, py);
+        const w = kernel[halfKernel - step];
+        accum += sample * w;
+        weight += w;
+      }
+
+      licTexture[idx] = weight > 0 ? accum / weight : noiseTexture[idx];
+    }
+  }
+
+  let minVal = Infinity;
+  let maxVal = -Infinity;
+  for (let i = 0; i < total; i++) {
+    const val = licTexture[i];
+    if (val < minVal) minVal = val;
+    if (val > maxVal) maxVal = val;
+  }
+
+  const range = maxVal - minVal || 1;
+  const gamma = Math.max(1, params.contrastBoost || 1);
+  for (let i = 0; i < total; i++) {
+    const norm = (licTexture[i] - minVal) / range;
+    licTexture[i] = Math.pow(norm, 1 / gamma);
+  }
+
+  return licTexture;
+}
+
+function ensureLineIntegralConvolutionData(cols, rows, params) {
+  const baseMethod = params.baseFieldMethod || "perlin";
+  const baseParamSnapshot = METHOD_PARAMS[baseMethod]
+    ? JSON.stringify(METHOD_PARAMS[baseMethod])
+    : "{}";
+  const key = JSON.stringify({
+    cols,
+    rows,
+    baseMethod,
+    baseParamSnapshot,
+    fieldScale: FIELD_SCALE,
+    streamlineLength: params.streamlineLength,
+    kernelSize: params.kernelSize,
+    textureResolution: params.textureResolution,
+    contrastBoost: params.contrastBoost,
+    flowDirection: params.flowDirection,
+    seed: ACTUAL_SEED ?? 0,
+  });
+
+  if (!licCache || licCache.key !== key) {
+    const scale = Math.max(0.0001, FIELD_SCALE * (params.textureResolution || 1));
+    const baseField = buildBaseFieldVectors(baseMethod, cols, rows, scale);
+    const licTexture = computeLICTexture(cols, rows, baseField, params);
+    licCache = {
+      key,
+      cols,
+      rows,
+      baseField,
+      licTexture,
+    };
+  }
+
+  return licCache;
+}
 
 function setup() {
   const defaultRatio =
@@ -435,7 +448,8 @@ function setup() {
 function showProgressBar(show) {
   const overlay = document.getElementById("progressOverlay");
   if (overlay) {
-    overlay.style.display = show ? "flex" : "none";
+    overlay.classList.toggle("visible", show);
+    overlay.style.display = "flex";
   }
   // Disable regeneration button while processing
   const regenBtn = document.getElementById("forceRegenerateBtn");
@@ -448,14 +462,62 @@ function updateProgressBar(percentage) {
   const progressBar = document.getElementById("progressBar");
   if (progressBar) {
     const p = Math.min(100, Math.max(0, percentage));
-    progressBar.style.width = `${p}%`;
     progressBar.textContent = `${p.toFixed(0)}%`;
+    progressBar.style.setProperty("--progress-width", `${p}%`);
   }
 }
 
+function updateSeedUI(seedValue, mode = SEED_MODE) {
+  const label = document.getElementById("seedValue");
+  const input = document.getElementById("seedInput");
+  const hasSeed = seedValue !== null && seedValue !== undefined;
+  const numericSeed = hasSeed ? Number(seedValue) : null;
+
+  if (mode === "auto") {
+    if (label) {
+      label.textContent = numericSeed !== null ? `Random (${numericSeed})` : "Random";
+    }
+    if (input) {
+      input.value = "";
+    }
+  } else if (mode === "random") {
+    if (label) {
+      label.textContent = numericSeed !== null ? `Random (${numericSeed})` : "Random";
+    }
+    if (input && numericSeed !== null) {
+      input.value = `${numericSeed}`;
+    }
+  } else {
+    if (label) {
+      label.textContent = numericSeed !== null ? `${numericSeed}` : "Random";
+    }
+    if (input) {
+      input.value = numericSeed !== null ? `${numericSeed}` : "";
+    }
+  }
+
+  SEED_MODE = mode;
+}
+
+function terminateWorkers() {
+  workers.forEach((worker) => {
+    try {
+      worker.terminate();
+    } catch (err) {
+      console.error("Worker termination failed", err);
+    }
+  });
+  workers = [];
+  pendingWorkerCount = 0;
+}
+
 function cancelGeneration() {
-  isGenerationCancelled = true;
+  activeGenerationToken++;
+  terminateWorkers();
+  rawPathBuffers = [];
+  completedPathCount = 0;
   showProgressBar(false);
+  updateProgressBar(0);
   console.log("Generation cancelled by user.");
 }
 
@@ -470,6 +532,8 @@ function resizeCanvasAndRegenerate(newWidth, newHeight) {
   // Recalculate grid size based on new canvas dimensions
   columns = floor(width / STEP_SIZE);
   rows = floor(height / STEP_SIZE);
+
+  invalidateAllCaches();
 
   // Re-run source generation for multi-source methods
   regenerateSourcesForCurrent(true);
@@ -555,6 +619,7 @@ function setupSliders() {
     });
     fieldMethodSelect.addEventListener("change", (e) => {
       FIELD_METHOD = e.target.value;
+      invalidateAllCaches();
       const label = document.getElementById("fieldMethodLabel");
       if (label) label.textContent = FIELD_METHODS[FIELD_METHOD].name;
       buildParamsUI();
@@ -568,6 +633,7 @@ function setupSliders() {
     FIELD_SCALE = parseFloat(e.target.value);
     document.getElementById("fieldScaleValue").textContent =
       FIELD_SCALE.toFixed(3);
+    invalidateCachesForMethod(FIELD_METHOD);
     maybeAutoRegenerate();
   });
 
@@ -591,6 +657,7 @@ function setupSliders() {
     document.getElementById("stepSizeValue").textContent = STEP_SIZE.toFixed(1);
     columns = floor(width / STEP_SIZE);
     rows = floor(height / STEP_SIZE);
+    invalidateAllCaches();
     maybeAutoRegenerate();
   });
 
@@ -608,11 +675,18 @@ function setupSliders() {
     const value = e.target.value;
     if (value === "") {
       CURRENT_SEED = null;
-      document.getElementById("seedValue").textContent = "Random";
+      updateSeedUI(null, "auto");
     } else {
-      CURRENT_SEED = parseInt(value);
-      document.getElementById("seedValue").textContent = CURRENT_SEED;
+      const parsed = parseInt(value, 10);
+      if (Number.isNaN(parsed)) {
+        CURRENT_SEED = null;
+        updateSeedUI(null, "auto");
+      } else {
+        CURRENT_SEED = parsed;
+        updateSeedUI(parsed, "manual");
+      }
     }
+    invalidateAllCaches();
     maybeAutoRegenerate();
   });
 }
@@ -668,6 +742,7 @@ function buildParamsUI() {
       control.addEventListener("input", () => {
         METHOD_PARAMS[FIELD_METHOD][pkey] = parseFloat(control.value);
         valSpan.textContent = control.value;
+        invalidateCachesForMethod(FIELD_METHOD);
         maybeAutoRegenerate();
         if (pkey === "sourcesCount" || pkey === "distribution") {
           regenerateSourcesForCurrent();
@@ -680,6 +755,7 @@ function buildParamsUI() {
       control.style.transform = "scale(1.1)";
       control.addEventListener("change", () => {
         METHOD_PARAMS[FIELD_METHOD][pkey] = control.checked;
+        invalidateCachesForMethod(FIELD_METHOD);
         maybeAutoRegenerate();
       });
     } else if (cfg.type === "select") {
@@ -697,6 +773,7 @@ function buildParamsUI() {
       control.style.fontSize = "12px";
       control.addEventListener("change", () => {
         METHOD_PARAMS[FIELD_METHOD][pkey] = control.value;
+        invalidateCachesForMethod(FIELD_METHOD);
         maybeAutoRegenerate();
         if (pkey === "distribution" || pkey === "rotationDir") {
           if (pkey === "distribution") regenerateSourcesForCurrent();
@@ -807,22 +884,21 @@ function buildInteractionUI(container) {
   container.appendChild(section);
 }
 
-function regenerateSourcesForCurrent(forceRandom = false) {
-  const method = FIELD_METHOD;
+function generateSourcesForMethod(method, forceRandom = false) {
   const meta = FIELD_METHODS[method];
-  if (!meta.params || !meta.params.sourcesCount) {
-    METHOD_SOURCES[method] = [];
-    return;
-  }
-  const count = METHOD_PARAMS[method].sourcesCount;
-  const distribution = METHOD_PARAMS[method].distribution;
+  if (!meta || !meta.params || !meta.params.sourcesCount) return [];
+  const params = METHOD_PARAMS[method] || {};
+  const count = Math.max(0, params.sourcesCount || 0);
+  const distribution = params.distribution || "random";
   const sources = [];
+  if (count === 0) return sources;
+
   if (distribution === "random" || forceRandom) {
     for (let k = 0; k < count; k++) {
       sources.push({ x: random(columns), y: random(rows) });
     }
   } else if (distribution === "grid") {
-    let side = ceil(sqrt(count));
+    const side = ceil(sqrt(count));
     for (let gx = 0; gx < side && sources.length < count; gx++) {
       for (let gy = 0; gy < side && sources.length < count; gy++) {
         sources.push({
@@ -840,7 +916,27 @@ function regenerateSourcesForCurrent(forceRandom = false) {
       sources.push({ x: cx + cos(a) * radius, y: cy + sin(a) * radius });
     }
   }
+
+  return sources;
+}
+
+function ensureSourcesForMethod(method) {
+  const meta = FIELD_METHODS[method];
+  if (!meta || !meta.params || !meta.params.sourcesCount) return;
+  const params = METHOD_PARAMS[method];
+  if (!params) return;
+  const expected = Math.max(0, params.sourcesCount || 0);
+  const existing = METHOD_SOURCES[method];
+  if (!Array.isArray(existing) || existing.length !== expected) {
+    METHOD_SOURCES[method] = generateSourcesForMethod(method);
+  }
+}
+
+function regenerateSourcesForCurrent(forceRandom = false) {
+  const method = FIELD_METHOD;
+  const sources = generateSourcesForMethod(method, forceRandom);
   METHOD_SOURCES[method] = sources;
+  invalidateCachesForMethod(method);
 }
 
 function setupGlobalListeners() {
@@ -864,445 +960,416 @@ function maybeAutoRegenerate() {
 }
 
 function randomizeSeed() {
-  CURRENT_SEED = null;
-  document.getElementById("seedInput").value = "";
-  document.getElementById("seedValue").textContent = "Random";
+  const newSeed = Math.floor(Math.random() * 0xffffffff);
+  CURRENT_SEED = newSeed;
+  ACTUAL_SEED = newSeed;
+  updateSeedUI(newSeed, "random");
+  invalidateAllCaches();
   regenerate();
 }
 
 function regenerate() {
-  // If already generating, cancel the existing process first
-  if (pathIndex < NUM_PATHS && !isGenerationCancelled) {
-    cancelGeneration();
-  }
+  activeGenerationToken += 1;
+  const generationToken = activeGenerationToken;
 
+  terminateWorkers();
   paths = [];
-  isGenerationCancelled = false; // Reset cancellation state
-  pathIndex = 0; // Reset path counter
+  completedPathCount = 0;
+  rawPathBuffers = [];
 
-  generateField(); // Generate the underlying field structure
+  showProgressBar(true);
+  updateProgressBar(0);
 
-  // If the number of paths is large, or repulsion is enabled, we use chunking
-  if (NUM_PATHS > 1000 || INTERACTION_PARAMS.repelEnabled) {
-    showProgressBar(true);
-    drawFieldSetup(); // Start the asynchronous drawing process
-  } else {
-    // For fast processes, draw synchronously without a progress bar
-    drawFieldSynchronous();
+  const fieldBuffer = generateField();
+  lastFieldBuffer = fieldBuffer;
+
+  pathSeedBase = computePathSeed();
+
+  if (NUM_PATHS <= 0) {
+    finalizeGeneration([], generationToken);
+    return;
+  }
+
+  if (typeof Worker === "undefined") {
+    const fallbackRaw = tracePathsSerial(fieldBuffer, generationToken);
+    finalizeGeneration(fallbackRaw, generationToken);
+    return;
+  }
+
+  dispatchWorkers(fieldBuffer, generationToken);
+}
+
+function dispatchWorkers(fieldBuffer, generationToken) {
+  // Spawn web workers to trace path batches in parallel.
+  const maxWorkers = Math.max(1, Math.min(NUM_WORKERS, NUM_PATHS));
+  const chunkSize = Math.ceil(NUM_PATHS / maxWorkers);
+
+  rawPathBuffers = new Array(NUM_PATHS).fill(null);
+  pendingWorkerCount = 0;
+  completedPathCount = 0;
+
+  for (let workerIndex = 0; workerIndex < maxWorkers; workerIndex++) {
+    const startIdx = workerIndex * chunkSize;
+    const endIdx = Math.min(NUM_PATHS, startIdx + chunkSize);
+    if (startIdx >= endIdx) continue;
+
+    const worker = new Worker("path-worker.js");
+    pendingWorkerCount++;
+    workers.push(worker);
+
+    worker.onmessage = (event) => handleWorkerMessage(event, generationToken);
+    worker.onerror = (err) => handleWorkerError(err, generationToken);
+
+    const fieldCopy = fieldBuffer.slice();
+    const payload = {
+      token: generationToken,
+      startIdx,
+      endIdx,
+      params: {
+        width,
+        height,
+        stepSize: STEP_SIZE,
+        resolution: RESOLUTION,
+        columns,
+        rows,
+        seed: pathSeedBase >>> 0,
+        offset: startIdx,
+      },
+      fieldData: fieldCopy,
+    };
+
+    worker.postMessage(payload, [payload.fieldData.buffer]);
+  }
+
+  if (pendingWorkerCount === 0) {
+    const fallbackRaw = tracePathsSerial(fieldBuffer, generationToken);
+    finalizeGeneration(fallbackRaw, generationToken);
   }
 }
 
-// New: Setup for chunked drawing
-function drawFieldSetup() {
-  // Common drawing setup (background, stroke style)
+function handleWorkerMessage(event, generationToken) {
+  if (generationToken !== activeGenerationToken) return;
+
+  const data = event.data || {};
+  if (data.token !== generationToken) return;
+
+  const { startIdx, paths: workerPaths } = data;
+  if (!Array.isArray(workerPaths)) {
+    pendingWorkerCount = Math.max(0, pendingWorkerCount - 1);
+    return;
+  }
+
+  for (let i = 0; i < workerPaths.length; i++) {
+    rawPathBuffers[startIdx + i] = workerPaths[i];
+  }
+
+  if (NUM_PATHS > 0) {
+    completedPathCount += workerPaths.length;
+    updateProgressBar((completedPathCount / NUM_PATHS) * 100);
+  }
+
+  pendingWorkerCount = Math.max(0, pendingWorkerCount - 1);
+  if (pendingWorkerCount === 0) {
+    finalizeGeneration(rawPathBuffers, generationToken);
+  }
+}
+
+function handleWorkerError(err, generationToken) {
+  console.error("Worker error", err);
+  if (generationToken !== activeGenerationToken) return;
+
+  pendingWorkerCount = Math.max(0, pendingWorkerCount - 1);
+  if (pendingWorkerCount === 0) {
+    terminateWorkers();
+    const fallbackRaw = tracePathsSerial(lastFieldBuffer, generationToken);
+    finalizeGeneration(fallbackRaw, generationToken);
+  }
+}
+
+function finalizeGeneration(rawBuffers, generationToken) {
+  // Collect worker results, apply repulsion, and render the final set.
+  if (generationToken !== activeGenerationToken) return;
+
+  terminateWorkers();
+
+  const convertedPaths = [];
+  if (Array.isArray(rawBuffers)) {
+    for (let i = 0; i < rawBuffers.length; i++) {
+      const path = convertBufferToPath(rawBuffers[i]);
+      if (path && path.length) convertedPaths.push(path);
+    }
+  }
+
+  let processedPaths = convertedPaths;
+  if (INTERACTION_PARAMS.repelEnabled && processedPaths.length) {
+    processedPaths = applyRepulsion(processedPaths);
+  }
+
+  paths = processedPaths;
+  renderPaths(paths);
+
+  if (NUM_PATHS > 0) {
+    updateProgressBar(100);
+  } else {
+    updateProgressBar(0);
+  }
+  showProgressBar(false);
+  console.log("Generation complete.");
+}
+
+function convertBufferToPath(buffer) {
+  if (!(buffer instanceof Float32Array) || buffer.length < 2) return null;
+  const path = [];
+  for (let i = 0; i < buffer.length; i += 2) {
+    const x = buffer[i];
+    const y = buffer[i + 1];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    path.push({ x, y });
+  }
+  return path.length ? path : null;
+}
+
+function renderPaths(pathCollection) {
   background(255);
   stroke(0);
   strokeWeight(STROKE_WEIGHT);
   noFill();
 
-  // Reset spatial hash for path points
+  if (!Array.isArray(pathCollection) || pathCollection.length === 0) return;
+
+  for (const path of pathCollection) {
+    if (!path || path.length < 2) continue;
+    beginShape();
+    for (const point of path) {
+      vertex(point.x, point.y);
+    }
+    endShape();
+  }
+}
+
+function applyRepulsion(pathCollection) {
+  // Post-processing repulsion run on the main thread using a spatial hash.
+  if (!INTERACTION_PARAMS.repelEnabled) return pathCollection;
+
+  const radius = Math.max(1, INTERACTION_PARAMS.repelRadius);
+  const strength = INTERACTION_PARAMS.repelStrength;
+  const maxNeighbors = INTERACTION_PARAMS.maxNeighbors;
+  const dampen = INTERACTION_PARAMS.angleDampen;
+
+  BUCKET_SIZE = radius; // keep bucket size aligned with radius slider
   pointBuckets = {};
+  buildSpatialHash(pathCollection);
 
-  // Define helper functions locally (or globally if preferred)
-  this.bucketKey = function (x, y) {
-    return `${Math.floor(x / BUCKET_SIZE)},${Math.floor(y / BUCKET_SIZE)}`;
-  };
-  this.addPointToBuckets = function (pt) {
-    const key = this.bucketKey(pt.x, pt.y);
-    if (!pointBuckets[key]) pointBuckets[key] = [];
-    pointBuckets[key].push(pt);
-  }.bind(this);
-  this.queryNeighbors = function (x, y, radius) {
-    const bx = Math.floor(x / BUCKET_SIZE);
-    const by = Math.floor(y / BUCKET_SIZE);
-    const results = [];
-    const range = 1 + Math.ceil(radius / BUCKET_SIZE);
-    for (let dx = -range; dx <= range; dx++) {
-      for (let dy = -range; dy <= range; dy++) {
-        const key = `${bx + dx},${by + dy}`;
-        const arr = pointBuckets[key];
-        if (!arr) continue;
-        for (let p of arr) {
-          const d = dist(x, y, p.x, p.y);
-          if (d > 0 && d <= radius) results.push({ p, d });
-        }
+  for (const path of pathCollection) {
+    for (const point of path) {
+      const neighbors = queryNeighborsForPoint(point, radius, maxNeighbors);
+      if (!neighbors.length) continue;
+
+      const repulse = createVector(0, 0);
+      for (const n of neighbors) {
+        const dir = createVector(point.x - n.p.x, point.y - n.p.y);
+        const d = Math.max(n.d, 0.0001);
+        const mag = strength / (d * d);
+        dir.normalize().mult(mag);
+        repulse.add(dir);
       }
+      repulse.limit(STEP_SIZE * 2);
+      point.x += repulse.x * dampen;
+      point.y += repulse.y * dampen;
+      point.x = constrain(point.x, 0, width);
+      point.y = constrain(point.y, 0, height);
     }
-    return results.slice(0, INTERACTION_PARAMS.maxNeighbors); // Limit results here for safety
-  }.bind(this);
+  }
 
-  // Start the chunked loop
-  processPathsChunk();
+  return pathCollection;
 }
 
-// New: Asynchronous chunked drawing
-function processPathsChunk() {
-  const startPath = pathIndex;
-  const endPath = Math.min(NUM_PATHS, startPath + PATHS_PER_CHUNK);
-  const useRepulsion = INTERACTION_PARAMS.repelEnabled;
-
-  for (let i = startPath; i < endPath; i++) {
-    if (isGenerationCancelled) {
-      showProgressBar(false);
-      return;
+function buildSpatialHash(pathCollection) {
+  if (!Array.isArray(pathCollection)) return;
+  for (const path of pathCollection) {
+    for (const point of path) {
+      const key = getBucketKey(point.x, point.y);
+      if (!pointBuckets[key]) pointBuckets[key] = [];
+      pointBuckets[key].push(point);
     }
+  }
+}
 
-    let current_pos = createVector(random(width), random(height));
-    let pathPoints = [{ x: current_pos.x, y: current_pos.y }];
-    if (useRepulsion) this.addPointToBuckets(current_pos.copy());
+function getBucketKey(x, y) {
+  const size = Math.max(1, BUCKET_SIZE);
+  return `${Math.floor(x / size)},${Math.floor(y / size)}`;
+}
 
-    beginShape();
-    vertex(current_pos.x, current_pos.y);
+function queryNeighborsForPoint(point, radius, maxResults) {
+  const size = Math.max(1, BUCKET_SIZE);
+  const bx = Math.floor(point.x / size);
+  const by = Math.floor(point.y / size);
+  const results = [];
+  const range = 1 + Math.ceil(radius / size);
 
-    for (let j = 0; j < RESOLUTION; j++) {
-      let x_index = floor(current_pos.x / STEP_SIZE);
-      let y_index = floor(current_pos.y / STEP_SIZE);
-
-      x_index = constrain(x_index, 0, columns - 1);
-      y_index = constrain(y_index, 0, rows - 1);
-
-      let index = x_index + y_index * columns;
-      let force = field[index];
-
-      if (!force) break;
-
-      let stepVec = force.copy().setMag(STEP_SIZE);
-      if (useRepulsion) {
-        const neighbors = this.queryNeighbors(
-          current_pos.x,
-          current_pos.y,
-          INTERACTION_PARAMS.repelRadius,
-        );
-        let repulse = createVector(0, 0);
-        let count = 0;
-        for (let n of neighbors) {
-          const dir = createVector(
-            current_pos.x - n.p.x,
-            current_pos.y - n.p.y,
-          );
-          const d = max(n.d, 0.0001);
-          const mag = INTERACTION_PARAMS.repelStrength / (d * d);
-          dir.normalize().mult(mag);
-          repulse.add(dir);
-          count++;
-        }
-        if (count > 0) {
-          repulse.limit(STEP_SIZE * 2);
-          stepVec = p5.Vector.lerp(
-            stepVec,
-            stepVec.copy().add(repulse),
-            INTERACTION_PARAMS.angleDampen,
-          );
-          stepVec.setMag(STEP_SIZE);
+  for (let dx = -range; dx <= range; dx++) {
+    for (let dy = -range; dy <= range; dy++) {
+      const key = `${bx + dx},${by + dy}`;
+      const bucket = pointBuckets[key];
+      if (!bucket) continue;
+      for (const candidate of bucket) {
+        if (candidate === point) continue;
+        const d = dist(point.x, point.y, candidate.x, candidate.y);
+        if (d > 0 && d <= radius) {
+          results.push({ p: candidate, d });
+          if (results.length >= maxResults) return results;
         }
       }
-      current_pos.add(stepVec);
-      pathPoints.push({ x: current_pos.x, y: current_pos.y });
-      if (useRepulsion) this.addPointToBuckets(current_pos.copy());
-      vertex(current_pos.x, current_pos.y);
+    }
+  }
+
+  return results;
+}
+
+function computePathSeed() {
+  if (ACTUAL_SEED !== null) {
+    const base = (ACTUAL_SEED >>> 0) * 1664525 + 1013904223;
+    return base >>> 0;
+  }
+  return Math.floor(Math.random() * 0xffffffff) >>> 0;
+}
+
+function createPRNG(seed) {
+  let state = seed >>> 0;
+  return {
+    next() {
+      state = (state + 0x6d2b79f5) >>> 0;
+      let t = Math.imul(state ^ (state >>> 15), 1 | state);
+      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    },
+  };
+}
+
+function tracePathsSerial(fieldBuffer, generationToken) {
+  if (!fieldBuffer || !fieldBuffer.length || NUM_PATHS <= 0) return [];
+
+  const prng = createPRNG(pathSeedBase >>> 0);
+  const maxPoints = RESOLUTION + 1;
+  const results = new Array(NUM_PATHS);
+
+  for (let pathIdx = 0; pathIdx < NUM_PATHS; pathIdx++) {
+    if (generationToken !== activeGenerationToken) break;
+
+    const coords = new Float32Array(maxPoints * 2);
+    let pointCount = 0;
+
+    let currentX = prng.next() * width;
+    let currentY = prng.next() * height;
+    coords[pointCount * 2] = currentX;
+    coords[pointCount * 2 + 1] = currentY;
+    pointCount++;
+
+    for (let step = 0; step < RESOLUTION; step++) {
+      let xIndex = Math.floor(currentX / STEP_SIZE);
+      let yIndex = Math.floor(currentY / STEP_SIZE);
+      xIndex = Math.min(Math.max(xIndex, 0), columns - 1);
+      yIndex = Math.min(Math.max(yIndex, 0), rows - 1);
+
+      const idx = (xIndex + yIndex * columns) * 2;
+      const fx = fieldBuffer[idx];
+      const fy = fieldBuffer[idx + 1];
+      if (!Number.isFinite(fx) || !Number.isFinite(fy)) break;
+
+      let stepX = fx;
+      let stepY = fy;
+      const len = Math.hypot(stepX, stepY);
+      if (len === 0) break;
+      stepX = (stepX / len) * STEP_SIZE;
+      stepY = (stepY / len) * STEP_SIZE;
+
+      currentX += stepX;
+      currentY += stepY;
+
+      coords[pointCount * 2] = currentX;
+      coords[pointCount * 2 + 1] = currentY;
+      pointCount++;
 
       if (
-        current_pos.x < 0 ||
-        current_pos.x > width ||
-        current_pos.y < 0 ||
-        current_pos.y > height
+        currentX < 0 ||
+        currentX > width ||
+        currentY < 0 ||
+        currentY > height
       ) {
         break;
       }
     }
 
-    endShape();
-    paths.push(pathPoints);
-    pathIndex++;
+    results[pathIdx] = coords.slice(0, pointCount * 2);
+    updateProgressBar(((pathIdx + 1) / NUM_PATHS) * 100);
   }
 
-  // Update progress
-  updateProgressBar((pathIndex / NUM_PATHS) * 100);
-
-  // Check completion
-  if (pathIndex < NUM_PATHS) {
-    // Continue processing in the next frame to prevent blocking
-    setTimeout(processPathsChunk, 0);
-  } else {
-    // Done!
-    showProgressBar(false);
-    console.log("Generation complete.");
-  }
-}
-
-// New: Synchronous drawing (for small, fast generations)
-function drawFieldSynchronous() {
-  background(255);
-  stroke(0);
-  strokeWeight(STROKE_WEIGHT);
-  noFill();
-
-  // Quick and dirty setup for local helpers (no need for complex binding as it's synchronous)
-  let pointBuckets = {};
-  const BUCKET_SIZE = INTERACTION_PARAMS.repelRadius;
-  const bucketKey = (x, y) =>
-    `${Math.floor(x / BUCKET_SIZE)},${Math.floor(y / BUCKET_SIZE)}`;
-  const addPointToBuckets = (pt) => {
-    const key = bucketKey(pt.x, pt.y);
-    if (!pointBuckets[key]) pointBuckets[key] = [];
-    pointBuckets[key].push(pt);
-  };
-  const queryNeighbors = (x, y, radius) => {
-    const bx = Math.floor(x / BUCKET_SIZE);
-    const by = Math.floor(y / BUCKET_SIZE);
-    const results = [];
-    const range = 1 + Math.ceil(radius / BUCKET_SIZE);
-    for (let dx = -range; dx <= range; dx++) {
-      for (let dy = -range; dy <= range; dy++) {
-        const key = `${bx + dx},${by + dy}`;
-        const arr = pointBuckets[key];
-        if (!arr) continue;
-        for (let p of arr) {
-          const d = dist(x, y, p.x, p.y);
-          if (d > 0 && d <= radius) results.push({ p, d });
-        }
-      }
-    }
-    return results.slice(0, INTERACTION_PARAMS.maxNeighbors);
-  };
-
-  const useRepulsion = INTERACTION_PARAMS.repelEnabled;
-  paths = []; // Overwrite paths with fresh data
-
-  for (let i = 0; i < NUM_PATHS; i++) {
-    let current_pos = createVector(random(width), random(height));
-    let pathPoints = [{ x: current_pos.x, y: current_pos.y }];
-    if (useRepulsion) addPointToBuckets(current_pos.copy());
-
-    beginShape();
-    vertex(current_pos.x, current_pos.y);
-
-    for (let j = 0; j < RESOLUTION; j++) {
-      let x_index = floor(current_pos.x / STEP_SIZE);
-      let y_index = floor(current_pos.y / STEP_SIZE);
-
-      x_index = constrain(x_index, 0, columns - 1);
-      y_index = constrain(y_index, 0, rows - 1);
-
-      let index = x_index + y_index * columns;
-      let force = field[index];
-
-      if (!force) break;
-
-      let stepVec = force.copy().setMag(STEP_SIZE);
-      if (useRepulsion) {
-        const neighbors = queryNeighbors(
-          current_pos.x,
-          current_pos.y,
-          INTERACTION_PARAMS.repelRadius,
-        );
-        let repulse = createVector(0, 0);
-        let count = 0;
-        for (let n of neighbors) {
-          const dir = createVector(
-            current_pos.x - n.p.x,
-            current_pos.y - n.p.y,
-          );
-          const d = max(n.d, 0.0001);
-          const mag = INTERACTION_PARAMS.repelStrength / (d * d);
-          dir.normalize().mult(mag);
-          repulse.add(dir);
-          count++;
-        }
-        if (count > 0) {
-          repulse.limit(STEP_SIZE * 2);
-          stepVec = p5.Vector.lerp(
-            stepVec,
-            stepVec.copy().add(repulse),
-            INTERACTION_PARAMS.angleDampen,
-          );
-          stepVec.setMag(STEP_SIZE);
-        }
-      }
-      current_pos.add(stepVec);
-      pathPoints.push({ x: current_pos.x, y: current_pos.y });
-      if (useRepulsion) addPointToBuckets(current_pos.copy());
-      vertex(current_pos.x, current_pos.y);
-
-      if (
-        current_pos.x < 0 ||
-        current_pos.x > width ||
-        current_pos.y < 0 ||
-        current_pos.y > height
-      ) {
-        break;
-      }
-    }
-
-    endShape();
-    paths.push(pathPoints);
-  }
+  return results;
 }
 
 // --- Core Logic (Modified) ---
 
 function generateField() {
-  field = new Array(columns * rows);
+  const totalCells = Math.max(0, columns * rows);
+  field = new Array(totalCells);
+  const typedField = new Float32Array(Math.max(0, totalCells * 2));
 
-  // Only seed noise-dependent methods once
-  let needsNoise = [
-    "quantizedPerlin",
-    "perlin",
-    "curlLike",
-    "signedQuantized",
-  ].includes(FIELD_METHOD);
-  if (needsNoise) {
-    let seed = CURRENT_SEED !== null ? CURRENT_SEED : random(10000);
-    ACTUAL_SEED = Math.floor(seed);
-    noiseSeed(seed);
+  const previousSeed = ACTUAL_SEED;
+  if (SEEDED_METHODS.has(FIELD_METHOD)) {
+    let seed =
+      CURRENT_SEED !== null
+        ? CURRENT_SEED >>> 0
+        : Math.floor(Math.random() * 0xffffffff);
+    seed = Math.floor(seed >>> 0);
+    ACTUAL_SEED = seed;
+    if (typeof noiseSeed === "function") noiseSeed(seed);
+    if (typeof randomSeed === "function") randomSeed(seed);
+    if (previousSeed !== ACTUAL_SEED) invalidateAllCaches();
     if (CURRENT_SEED === null) {
-      const seedValueEl = document.getElementById("seedValue");
-      if (seedValueEl) seedValueEl.textContent = `Random (${ACTUAL_SEED})`;
+      updateSeedUI(ACTUAL_SEED, "auto");
+    } else {
+      updateSeedUI(ACTUAL_SEED, SEED_MODE);
     }
   } else {
     ACTUAL_SEED = CURRENT_SEED !== null ? CURRENT_SEED : null;
+    if (previousSeed !== ACTUAL_SEED) invalidateAllCaches();
+    updateSeedUI(ACTUAL_SEED, CURRENT_SEED === null ? "auto" : SEED_MODE);
   }
 
-  let xoffBase = 0;
-  for (let i = 0; i < columns; i++) {
-    let yoffBase = 0;
-    for (let j = 0; j < rows; j++) {
-      const idx = i + j * columns;
-      const generator = FIELD_METHODS[FIELD_METHOD];
-      let v;
-      try {
-        v = generator.generate({
-          i,
-          j,
-          xoff: xoffBase,
-          yoff: yoffBase,
-        });
-      } catch (e) {
-        console.error("Generator error", e);
-        v = createVector(0, 0);
-      }
-      field[idx] = v || createVector(0, 0);
-      yoffBase += FIELD_SCALE;
-    }
-    xoffBase += FIELD_SCALE;
-  }
-}
-
-function drawField() {
-  background(255);
-  stroke(0);
-  strokeWeight(STROKE_WEIGHT);
-  noFill();
-  let bucketKey, addPointToBuckets, queryNeighbors;
-  if (INTERACTION_PARAMS.repelEnabled) {
-    // initialize spatial hash only if using repulsion
-    pointBuckets = {};
-    bucketKey = function (x, y) {
-      return `${Math.floor(x / BUCKET_SIZE)},${Math.floor(y / BUCKET_SIZE)}`;
-    };
-    addPointToBuckets = function (pt) {
-      const key = bucketKey(pt.x, pt.y);
-      if (!pointBuckets[key]) pointBuckets[key] = [];
-      pointBuckets[key].push(pt);
-    };
-    queryNeighbors = function (x, y, radius) {
-      const bx = Math.floor(x / BUCKET_SIZE);
-      const by = Math.floor(y / BUCKET_SIZE);
-      const results = [];
-      const range = 1 + Math.ceil(radius / BUCKET_SIZE);
-      for (let dx = -range; dx <= range; dx++) {
-        for (let dy = -range; dy <= range; dy++) {
-          const key = `${bx + dx},${by + dy}`;
-          const arr = pointBuckets[key];
-          if (!arr) continue;
-          for (let p of arr) {
-            const d = dist(x, y, p.x, p.y);
-            if (d > 0 && d <= radius) results.push({ p, d });
-          }
+  if (columns > 0 && rows > 0) {
+    let xoffBase = 0;
+    for (let i = 0; i < columns; i++) {
+      let yoffBase = 0;
+      for (let j = 0; j < rows; j++) {
+        const idx = i + j * columns;
+        const generator = FIELD_METHODS[FIELD_METHOD];
+        let v;
+        try {
+          v = generator.generate({
+            i,
+            j,
+            xoff: xoffBase,
+            yoff: yoffBase,
+            cols: columns,
+            rows,
+          });
+        } catch (e) {
+          console.error("Generator error", e);
+          v = createVector(0, 0);
         }
+        const vec = v || createVector(0, 0);
+        field[idx] = vec;
+        const baseIndex = idx * 2;
+        typedField[baseIndex] = vec.x;
+        typedField[baseIndex + 1] = vec.y;
+        yoffBase += FIELD_SCALE;
       }
-      return results;
-    };
-  } else {
-    // no-op functions when repulsion disabled
-    addPointToBuckets = function () {};
-    queryNeighbors = function () {
-      return [];
-    };
+      xoffBase += FIELD_SCALE;
+    }
   }
 
-  // Reverting to the original path-tracing logic
-  for (let i = 0; i < NUM_PATHS; i++) {
-    let current_pos = createVector(random(width), random(height));
-    let pathPoints = [{ x: current_pos.x, y: current_pos.y }];
-    addPointToBuckets(current_pos.copy());
-
-    for (let j = 0; j < RESOLUTION; j++) {
-      let x_index = floor(current_pos.x / STEP_SIZE);
-      let y_index = floor(current_pos.y / STEP_SIZE);
-
-      x_index = constrain(x_index, 0, columns - 1);
-      y_index = constrain(y_index, 0, rows - 1);
-
-      let index = x_index + y_index * columns;
-      let force = field[index];
-
-      if (!force) break;
-
-      let stepVec = force.copy().setMag(STEP_SIZE);
-      if (INTERACTION_PARAMS.repelEnabled) {
-        const neighbors = queryNeighbors(
-          current_pos.x,
-          current_pos.y,
-          INTERACTION_PARAMS.repelRadius,
-        );
-        let repulse = createVector(0, 0);
-        let count = 0;
-        for (let n of neighbors) {
-          if (count >= INTERACTION_PARAMS.maxNeighbors) break;
-          const dir = createVector(
-            current_pos.x - n.p.x,
-            current_pos.y - n.p.y,
-          );
-          const d = max(n.d, 0.0001);
-          const mag = INTERACTION_PARAMS.repelStrength / (d * d); // inverse square
-          dir.normalize().mult(mag);
-          repulse.add(dir);
-          count++;
-        }
-        if (count > 0) {
-          // Blend repulsion with original direction
-          repulse.limit(STEP_SIZE * 2);
-          stepVec = p5.Vector.lerp(
-            stepVec,
-            stepVec.copy().add(repulse),
-            INTERACTION_PARAMS.angleDampen,
-          );
-          stepVec.setMag(STEP_SIZE);
-        }
-      }
-      current_pos.add(stepVec);
-      pathPoints.push({ x: current_pos.x, y: current_pos.y });
-      addPointToBuckets(current_pos.copy());
-
-      if (
-        current_pos.x < 0 ||
-        current_pos.x > width ||
-        current_pos.y < 0 ||
-        current_pos.y > height
-      ) {
-        break;
-      }
-    }
-
-    paths.push(pathPoints);
-
-    beginShape();
-    for (let point of pathPoints) {
-      vertex(point.x, point.y);
-    }
-    endShape();
-  }
+  lastFieldBuffer = typedField;
+  return typedField;
 }
 
 function draw() {
@@ -1335,7 +1402,6 @@ function downloadJSON() {
       timestamp: new Date().toISOString(),
       canvas_width: width,
       canvas_height: height,
-      total_paths: paths.length,
     },
     parameters: {
       field_scale: FIELD_SCALE,
@@ -1354,7 +1420,6 @@ function downloadJSON() {
         angleDampen: INTERACTION_PARAMS.angleDampen,
       },
     },
-    paths: paths,
   };
 
   let json = JSON.stringify(data, null, 2);
