@@ -8,7 +8,7 @@
     <style>
         :root {
             --accent-color: #0057ba;
-            --accent-color-hover: #0057ba; 
+            --accent-color-hover: #0057ba;
             --text-color: #212529;
             --bg-color: #fafafa;
             --secondary-color: #70767b;
@@ -19,7 +19,7 @@
             margin: 0;
             display: flex;
             min-height: 100vh;
-            background-color: var(--bg-color); 
+            background-color: var(--bg-color);
             font-family: 'Inter', Arial, sans-serif;
             overflow: hidden;
             color: var(--text-color);
@@ -27,10 +27,10 @@
 
         #sidebar {
             width: 300px;
-            height: 100vh; 
+            height: 100vh;
             background: white;
             box-shadow: 4px 0 15px rgba(0, 0, 0, 0.05);
-            overflow-y: auto; 
+            overflow-y: auto;
             transition: margin-left 0.3s ease;
             position: relative;
             z-index: 10;
@@ -41,10 +41,10 @@
         #controls {
             padding: 25px 20px 20px 20px;
         }
-        
+
         #toggleBtn {
             position: fixed;
-            left: 300px; 
+            left: 300px;
             top: 20px;
             width: 40px;
             height: 40px;
@@ -61,8 +61,8 @@
             font-size: 18px;
             font-weight: bold;
         }
-        
-        #toggleBtn.hidden { 
+
+        #toggleBtn.hidden {
             left: 0;
             background: var(--text-color);
         }
@@ -78,8 +78,61 @@
             display: flex;
             justify-content: center;
             align-items: center;
+            position: relative; /* Crucial for positioning the overlay */
         }
-        
+
+        /* UPDATED PROGRESS BAR STYLES */
+        #progressOverlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            /* 60% opacity white background */
+            background: rgba(255, 255, 255, 0.6);
+            display: none; /* Initially hidden, controlled by JS */
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 5;
+        }
+        #progressBarContainer {
+            width: 60%;
+            max-width: 300px;
+            background-color: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2); /* Slightly darker shadow for visibility */
+        }
+        #progressBar {
+            height: 20px;
+            width: 0%;
+            /* Use the primary blue accent color for the bar */
+            background-color: var(--accent-color);
+            transition: width 0.1s ease-out;
+            text-align: center;
+            line-height: 20px;
+            color: white;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        #cancelBtn {
+            margin-top: 15px;
+            padding: 8px 20px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+        #cancelBtn:hover {
+            background: #c82333;
+        }
+        /* END UPDATED PROGRESS BAR STYLES */
+
         h2 {
             margin: 0 0 20px 0;
             font-size: 20px;
@@ -100,7 +153,7 @@
         }
 
         .control-group label {
-            font-weight: 500; 
+            font-weight: 500;
             font-size: 14px;
             color: var(--text-color);
             margin-bottom: 8px;
@@ -114,7 +167,7 @@
             font-weight: 600;
             color: var(--text-color);
         }
-        
+
         .slider-container {
             display: flex;
             align-items: center;
@@ -142,22 +195,22 @@
         }
 
         #seedInput {
-            flex: 1; 
-            padding: 8px; 
-            border: 1px solid #ced4da; 
+            flex: 1;
+            padding: 8px;
+            border: 1px solid #ced4da;
             border-radius: 4px;
             font-size: 14px;
             font-family: 'Inter', sans-serif;
             margin-top: 5px;
         }
-        
+
         .button-group {
             display: flex;
             flex-direction: column;
             gap: 10px;
             margin-top: 25px;
         }
-        
+
         button {
             width: 100%;
             padding: 12px 20px;
@@ -175,7 +228,7 @@
         }
 
         .control-group button {
-            background: #495057; 
+            background: #495057;
             padding: 8px 16px;
             margin-top: 10px;
         }
@@ -183,9 +236,9 @@
             background: #495057;
         }
 
-        .button-group button:nth-child(2), 
-        .button-group button:nth-child(3), 
-        .button-group button:nth-child(4) {  
+        .button-group button:nth-child(2),
+        .button-group button:nth-child(3),
+        .button-group button:nth-child(4) {
             background: var(--secondary-color);
             font-weight: 500;
             padding: 10px 20px;
@@ -195,15 +248,15 @@
         .button-group button:nth-child(4):hover {
             background: var(--secondary-color-hover);
         }
-        
+
         .info-box {
-            margin-top: 25px; 
+            margin-top: 25px;
             padding: 15px;
-            background-color: #929598; 
+            background-color: #929598;
             border: 1px solid #ffffff;
             border-radius: 4px;
             font-size: 12px;
-            color: #495057; 
+            color: #495057;
             line-height: 1.5;
             text-align: center;
         }
@@ -211,11 +264,33 @@
 </head>
 <body>
     <button id="toggleBtn" onclick="toggleSidebar()">◀</button>
-    
+
     <div id="sidebar">
         <div id="controls">
             <h2>Flow Field Controls</h2>
-            
+
+            <div class="control-group" style="border-top: none; padding-top: 0;">
+                <div style="display: flex; justify-content: space-between;">
+                    <label for="aspectRatioSelect">Canvas Aspect Ratio</label>
+                    <span class="value-display" id="aspectRatioValue">800x800</span>
+                </div>
+                <div class="slider-container" style="background:#f0f1f2;">
+                    <select id="aspectRatioSelect" style="flex:1; padding:6px 8px; border:1px solid #ced4da; border-radius:4px; font-size:13px; font-family:'Inter',sans-serif; background:white;">
+                        </select>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <div style="display: flex; justify-content: space-between; align-items:center;">
+                    <label for="fieldMethod">Field Method</label>
+                    <span class="value-display" id="fieldMethodLabel">Quantized Perlin</span>
+                </div>
+                <div class="slider-container" style="background:#f0f1f2;">
+                    <select id="fieldMethod" style="flex:1; padding:6px 8px; border:1px solid #ced4da; border-radius:4px; font-size:13px; font-family:'Inter',sans-serif; background:white;">
+                        </select>
+                </div>
+            </div>
+
             <div class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="fieldScale">Field Scale</label>
@@ -225,7 +300,7 @@
                     <input type="range" id="fieldScale" min="0.001" max="0.05" step="0.001" value="0.005">
                 </div>
             </div>
-            
+
             <div class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="resolution">Resolution</label>
@@ -235,27 +310,27 @@
                     <input type="range" id="resolution" min="10" max="100" step="5" value="30">
                 </div>
             </div>
-            
+
             <div class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="numPaths">Number of Paths</label>
                     <span class="value-display" id="numPathsValue">500</span>
                 </div>
                 <div class="slider-container">
-                    <input type="range" id="numPaths" min="100" max="7000" step="50" value="500">
+                    <input type="range" id="numPaths" min="100" max="10000" step="50" value="500">
                 </div>
             </div>
-            
+
             <div class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="stepSize">Step Size</label>
-                    <span class="value-display" id="stepSizeValue">4.0</span> 
+                    <span class="value-display" id="stepSizeValue">4.0</span>
                 </div>
                 <div class="slider-container">
                     <input type="range" id="stepSize" min="1" max="20" step="0.5" value="4">
                 </div>
             </div>
-            
+
             <div class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="strokeWeight">Stroke Weight</label>
@@ -265,23 +340,23 @@
                     <input type="range" id="strokeWeight" min="0.1" max="3" step="0.1" value="0.5">
                 </div>
             </div>
-            
+
             <div class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="seedInput">Seed</label>
-                    <span class="value-display" id="seedValue">Random</span> 
+                    <span class="value-display" id="seedValue">Random</span>
                 </div>
                 <input type="number" id="seedInput" placeholder="Enter seed">
                 <button onclick="randomizeSeed()">Random Seed</button>
             </div>
-            
+
             <div class="button-group">
                 <button onclick="regenerate()">Regenerate</button>
                 <button onclick="downloadSVG()">Download SVG</button>
                 <button onclick="downloadCSV()">Download CSV</button>
                 <button onclick="downloadJSON()">Download JSON</button>
             </div>
-            
+
             <div class="info-box">
                 <div>Created by ToledoEM</div>
                 MIT License</div>
@@ -289,9 +364,28 @@
 
         </div>
     </div>
-    
-    <div id="canvasContainer"></div>
-    
+
+    <div id="canvasContainer">
+        <div id="progressOverlay">
+            <div id="progressBarContainer">
+                <div id="progressBar">0%</div>
+            </div>
+            <button id="cancelBtn" onclick="cancelGeneration()">Cancel</button>
+        </div>
+        </div>
+    <div id="methodPanel" style="position:fixed; right:0; top:0; width:280px; height:100vh; background:#ffffff; box-shadow:-4px 0 15px rgba(0,0,0,0.05); padding:20px 18px 30px 18px; overflow-y:auto; font-family:'Inter',sans-serif;">
+        <h2 style="border-bottom:2px solid var(--accent-color); padding-bottom:8px; margin-top:0; font-size:18px;">Method Params</h2>
+        <div id="dynamicParams" style="display:flex; flex-direction:column; gap:16px;"></div>
+        <div style="margin-top:24px; border-top:1px solid #eee; padding-top:16px; display:flex; flex-direction:column; gap:10px;">
+            <label style="display:flex; align-items:center; gap:8px; font-size:13px; font-weight:500;">
+                <input type="checkbox" id="autoRegenerate" style="transform:scale(1.2);" />
+                Auto Regenerate on Change
+            </label>
+            <button id="forceRegenerateBtn" onclick="regenerate()" style="background:var(--accent-color);">Force Regenerate (R)</button>
+            <small style="color:#555; line-height:1.4;">Press <strong>R</strong> anytime to regenerate. Enable auto mode to update continuously when parameters or sliders change.</small>
+        </div>
+    </div>
+
     <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.1/p5.min.js"></script>
     <script src="flowfields.js"></script>
 </body>

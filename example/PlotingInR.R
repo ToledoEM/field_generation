@@ -41,3 +41,25 @@ plotter %>%
 ggsave(filename = "plotter_flow_field_colors_panel.png",width = 8,height = 8,units = "in")
 
 
+
+# Load data an create a color vector
+plotter <- read_csv("plotter_flow_field_v2.csv")
+pal <- wes_palette(10, name = "Zissou1", type = "continuous")
+
+
+plotter %>% 
+  group_by(path_id) %>% 
+  mutate(color=sample(pal,1)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x,y,group = path_id)) +
+  geom_path(aes(color=color),show.legend = F,linewidth=0.3) +
+  theme_void() +
+  scale_color_identity() + 
+  coord_fixed()
+
+
+plotter %>% 
+  ggplot(aes(x,y,group = point_index)) +
+  geom_path(aes(),show.legend = F,linewidth = 0.5,alpha=0.2) +
+  theme_void() +
+  scale_color_identity() 
