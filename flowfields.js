@@ -17,6 +17,7 @@ let FIELD_METHOD = "quantizedPerlin";
 let AUTO_REGENERATE = false;
 let METHOD_PARAMS = {}; // runtime parameter values per method
 let METHOD_SOURCES = {}; // per-method array of source points for multi-source behaviors
+let METHOD_SOURCE_NONCES = {}; // per-method sequence for deterministic source randomization
 let rdCache = null;
 let licCache = null;
 const SEEDED_METHODS = new Set([
@@ -84,6 +85,45 @@ function makeMulberry32(seed) {
     r ^= r + Math.imul(r ^ (r >>> 7), r | 61);
     return ((r ^ (r >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+function hashString32(value) {
+  const text = String(value);
+  let hash = 2166136261;
+  for (let i = 0; i < text.length; i++) {
+    hash ^= text.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
+}
+
+function hasManualSeed() {
+  return Number.isFinite(CURRENT_SEED);
+}
+
+function getSourceRNG(method, distribution, count, forceRandom = false) {
+  if (!hasManualSeed()) return Math.random;
+
+  const nonce = METHOD_SOURCE_NONCES[method] || 0;
+  const nextNonce = forceRandom ? nonce + 1 : nonce;
+  METHOD_SOURCE_NONCES[method] = nextNonce;
+
+  const seed =
+    (Number(CURRENT_SEED) >>> 0) ^
+    Math.imul(hashString32(method), 0x45d9f3b) ^
+    Math.imul(hashString32(distribution), 0x27d4eb2d) ^
+    Math.imul(count >>> 0, 0x85ebca6b) ^
+    Math.imul(nextNonce >>> 0, 0xc2b2ae35);
+  return makeMulberry32(seed >>> 0);
+}
+
+function resetSourceNonces() {
+  METHOD_SOURCE_NONCES = {};
+}
+
+function methodUsesSources(method) {
+  const meta = FIELD_METHODS[method];
+  return !!(meta && meta.params && meta.params.sourcesCount);
 }
 
 function simulateReactionDiffusion(cols, rows, params, seed) {
@@ -438,6 +478,7 @@ function setup() {
     setupSliders();
     setupAspectRatioControl();
     setupGlobalListeners();
+    showProgressBar(false);
     regenerateSourcesForCurrent();
     regenerate();
   }, 100);
@@ -448,8 +489,8 @@ function setup() {
 function showProgressBar(show) {
   const overlay = document.getElementById("progressOverlay");
   if (overlay) {
+    overlay.style.display = show ? "flex" : "none";
     overlay.classList.toggle("visible", show);
-    overlay.style.display = "flex";
   }
   // Disable regeneration button while processing
   const regenBtn = document.getElementById("forceRegenerateBtn");
@@ -671,24 +712,30 @@ function setupSliders() {
 
   // Seed Input
   const seedInput = document.getElementById("seedInput");
-  seedInput.addEventListener("input", (e) => {
-    const value = e.target.value;
-    if (value === "") {
-      CURRENT_SEED = null;
-      updateSeedUI(null, "auto");
-    } else {
-      const parsed = parseInt(value, 10);
-      if (Number.isNaN(parsed)) {
+  if (seedInput) {
+    seedInput.addEventListener("input", (e) => {
+      const value = e.target.value;
+      if (value === "") {
         CURRENT_SEED = null;
         updateSeedUI(null, "auto");
       } else {
-        CURRENT_SEED = parsed;
-        updateSeedUI(parsed, "manual");
+        const parsed = parseInt(value, 10);
+        if (Number.isNaN(parsed)) {
+          CURRENT_SEED = null;
+          updateSeedUI(null, "auto");
+        } else {
+          CURRENT_SEED = parsed;
+          updateSeedUI(parsed, "manual");
+        }
       }
-    }
-    invalidateAllCaches();
-    maybeAutoRegenerate();
-  });
+      resetSourceNonces();
+      if (CURRENT_SEED !== null && methodUsesSources(FIELD_METHOD)) {
+        regenerateSourcesForCurrent();
+      }
+      invalidateAllCaches();
+      maybeAutoRegenerate();
+    });
+  }
 }
 
 function setupMethodParams() {
@@ -742,11 +789,12 @@ function buildParamsUI() {
       control.addEventListener("input", () => {
         METHOD_PARAMS[FIELD_METHOD][pkey] = parseFloat(control.value);
         valSpan.textContent = control.value;
-        invalidateCachesForMethod(FIELD_METHOD);
-        maybeAutoRegenerate();
         if (pkey === "sourcesCount" || pkey === "distribution") {
           regenerateSourcesForCurrent();
+        } else {
+          invalidateCachesForMethod(FIELD_METHOD);
         }
+        maybeAutoRegenerate();
       });
     } else if (cfg.type === "checkbox") {
       control = document.createElement("input");
@@ -773,11 +821,12 @@ function buildParamsUI() {
       control.style.fontSize = "12px";
       control.addEventListener("change", () => {
         METHOD_PARAMS[FIELD_METHOD][pkey] = control.value;
-        invalidateCachesForMethod(FIELD_METHOD);
-        maybeAutoRegenerate();
-        if (pkey === "distribution" || pkey === "rotationDir") {
-          if (pkey === "distribution") regenerateSourcesForCurrent();
+        if (pkey === "distribution") {
+          regenerateSourcesForCurrent();
+        } else {
+          invalidateCachesForMethod(FIELD_METHOD);
         }
+        maybeAutoRegenerate();
       });
     } else {
       control = document.createElement("span");
@@ -890,12 +939,13 @@ function generateSourcesForMethod(method, forceRandom = false) {
   const params = METHOD_PARAMS[method] || {};
   const count = Math.max(0, params.sourcesCount || 0);
   const distribution = params.distribution || "random";
+  const rand = getSourceRNG(method, distribution, count, forceRandom);
   const sources = [];
   if (count === 0) return sources;
 
   if (distribution === "random" || forceRandom) {
     for (let k = 0; k < count; k++) {
-      sources.push({ x: random(columns), y: random(rows) });
+      sources.push({ x: rand() * columns, y: rand() * rows });
     }
   } else if (distribution === "grid") {
     const side = ceil(sqrt(count));
@@ -941,7 +991,17 @@ function regenerateSourcesForCurrent(forceRandom = false) {
 
 function setupGlobalListeners() {
   document.addEventListener("keydown", (e) => {
-    if (e.key === "r" || e.key === "R") {
+    const target = e.target;
+    const tagName = target && target.tagName ? target.tagName.toLowerCase() : "";
+    const isEditableTarget =
+      (target && target.isContentEditable) ||
+      tagName === "input" ||
+      tagName === "textarea" ||
+      tagName === "select";
+    if (isEditableTarget) return;
+
+    if ((e.key === "r" || e.key === "R") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      e.preventDefault();
       regenerate();
     }
   });
@@ -964,6 +1024,10 @@ function randomizeSeed() {
   CURRENT_SEED = newSeed;
   ACTUAL_SEED = newSeed;
   updateSeedUI(newSeed, "random");
+  resetSourceNonces();
+  if (methodUsesSources(FIELD_METHOD)) {
+    regenerateSourcesForCurrent();
+  }
   invalidateAllCaches();
   regenerate();
 }
@@ -1003,6 +1067,7 @@ function dispatchWorkers(fieldBuffer, generationToken) {
   // Spawn web workers to trace path batches in parallel.
   const maxWorkers = Math.max(1, Math.min(NUM_WORKERS, NUM_PATHS));
   const chunkSize = Math.ceil(NUM_PATHS / maxWorkers);
+  const sharedFieldBuffer = createSharedFieldBuffer(fieldBuffer);
 
   rawPathBuffers = new Array(NUM_PATHS).fill(null);
   pendingWorkerCount = 0;
@@ -1020,7 +1085,6 @@ function dispatchWorkers(fieldBuffer, generationToken) {
     worker.onmessage = (event) => handleWorkerMessage(event, generationToken);
     worker.onerror = (err) => handleWorkerError(err, generationToken);
 
-    const fieldCopy = fieldBuffer.slice();
     const payload = {
       token: generationToken,
       startIdx,
@@ -1035,15 +1099,37 @@ function dispatchWorkers(fieldBuffer, generationToken) {
         seed: pathSeedBase >>> 0,
         offset: startIdx,
       },
-      fieldData: fieldCopy,
     };
 
-    worker.postMessage(payload, [payload.fieldData.buffer]);
+    if (sharedFieldBuffer) {
+      payload.fieldBuffer = sharedFieldBuffer;
+      worker.postMessage(payload);
+    } else {
+      const fieldCopy = fieldBuffer.slice();
+      payload.fieldData = fieldCopy;
+      worker.postMessage(payload, [payload.fieldData.buffer]);
+    }
   }
 
   if (pendingWorkerCount === 0) {
     const fallbackRaw = tracePathsSerial(fieldBuffer, generationToken);
     finalizeGeneration(fallbackRaw, generationToken);
+  }
+}
+
+function createSharedFieldBuffer(fieldBuffer) {
+  if (typeof SharedArrayBuffer === "undefined") return null;
+  if (!(fieldBuffer instanceof Float32Array) || fieldBuffer.byteLength === 0) {
+    return null;
+  }
+  try {
+    const sharedBuffer = new SharedArrayBuffer(fieldBuffer.byteLength);
+    const sharedField = new Float32Array(sharedBuffer);
+    sharedField.set(fieldBuffer);
+    return sharedBuffer;
+  } catch (err) {
+    console.warn("Shared field buffer unavailable, falling back to copied buffers.", err);
+    return null;
   }
 }
 
@@ -1234,77 +1320,32 @@ function computePathSeed() {
   return Math.floor(Math.random() * 0xffffffff) >>> 0;
 }
 
-function createPRNG(seed) {
-  let state = seed >>> 0;
-  return {
-    next() {
-      state = (state + 0x6d2b79f5) >>> 0;
-      let t = Math.imul(state ^ (state >>> 15), 1 | state);
-      t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
-      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-    },
-  };
-}
-
 function tracePathsSerial(fieldBuffer, generationToken) {
   if (!fieldBuffer || !fieldBuffer.length || NUM_PATHS <= 0) return [];
-
-  const prng = createPRNG(pathSeedBase >>> 0);
-  const maxPoints = RESOLUTION + 1;
-  const results = new Array(NUM_PATHS);
-
-  for (let pathIdx = 0; pathIdx < NUM_PATHS; pathIdx++) {
-    if (generationToken !== activeGenerationToken) break;
-
-    const coords = new Float32Array(maxPoints * 2);
-    let pointCount = 0;
-
-    let currentX = prng.next() * width;
-    let currentY = prng.next() * height;
-    coords[pointCount * 2] = currentX;
-    coords[pointCount * 2 + 1] = currentY;
-    pointCount++;
-
-    for (let step = 0; step < RESOLUTION; step++) {
-      let xIndex = Math.floor(currentX / STEP_SIZE);
-      let yIndex = Math.floor(currentY / STEP_SIZE);
-      xIndex = Math.min(Math.max(xIndex, 0), columns - 1);
-      yIndex = Math.min(Math.max(yIndex, 0), rows - 1);
-
-      const idx = (xIndex + yIndex * columns) * 2;
-      const fx = fieldBuffer[idx];
-      const fy = fieldBuffer[idx + 1];
-      if (!Number.isFinite(fx) || !Number.isFinite(fy)) break;
-
-      let stepX = fx;
-      let stepY = fy;
-      const len = Math.hypot(stepX, stepY);
-      if (len === 0) break;
-      stepX = (stepX / len) * STEP_SIZE;
-      stepY = (stepY / len) * STEP_SIZE;
-
-      currentX += stepX;
-      currentY += stepY;
-
-      coords[pointCount * 2] = currentX;
-      coords[pointCount * 2 + 1] = currentY;
-      pointCount++;
-
-      if (
-        currentX < 0 ||
-        currentX > width ||
-        currentY < 0 ||
-        currentY > height
-      ) {
-        break;
-      }
-    }
-
-    results[pathIdx] = coords.slice(0, pointCount * 2);
-    updateProgressBar(((pathIdx + 1) / NUM_PATHS) * 100);
+  const traceCore =
+    typeof FlowFieldTraceCore !== "undefined" ? FlowFieldTraceCore : null;
+  if (!traceCore || typeof traceCore.tracePathBatch !== "function") {
+    console.error("Trace core unavailable in serial fallback.");
+    return [];
   }
 
-  return results;
+  return traceCore.tracePathBatch({
+    columns,
+    endIdx: NUM_PATHS,
+    fieldData: fieldBuffer,
+    height,
+    offset: 0,
+    onPathComplete: (_pathIndex, completedCount) => {
+      updateProgressBar((completedCount / NUM_PATHS) * 100);
+    },
+    resolution: RESOLUTION,
+    rows,
+    seed: pathSeedBase >>> 0,
+    shouldAbort: () => generationToken !== activeGenerationToken,
+    startIdx: 0,
+    stepSize: STEP_SIZE,
+    width,
+  });
 }
 
 // --- Core Logic (Modified) ---
@@ -1378,14 +1419,45 @@ function draw() {
 
 // --- Export Functions (updated downloadSVG) ---
 
-function downloadCSV() {
+function buildCSVFallback(pathCollection) {
   let csv = "path_id,point_index,x,y\n";
-
-  for (let i = 0; i < paths.length; i++) {
-    for (let j = 0; j < paths[i].length; j++) {
-      csv += `${i},${j},${paths[i][j].x.toFixed(2)},${paths[i][j].y.toFixed(2)}\n`;
+  for (let i = 0; i < pathCollection.length; i++) {
+    for (let j = 0; j < pathCollection[i].length; j++) {
+      csv += `${i},${j},${pathCollection[i][j].x.toFixed(2)},${pathCollection[i][j].y.toFixed(2)}\n`;
     }
   }
+  return csv;
+}
+
+function buildSVGFallback(pathCollection) {
+  let svg = `<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+  <rect width="${width}" height="${height}" fill="white"/>
+  <g stroke="black" stroke-width="${STROKE_WEIGHT}" fill="none">
+`;
+
+  for (let path of pathCollection) {
+    if (path.length < 2) continue;
+    svg += '    <polyline points="';
+    for (let i = 0; i < path.length; i++) {
+      svg += `${path[i].x.toFixed(2)},${path[i].y.toFixed(2)}`;
+      if (i < path.length - 1) svg += " ";
+    }
+    svg += '"/>\n';
+  }
+
+  svg += `  </g>
+</svg>`;
+  return svg;
+}
+
+function downloadCSV() {
+  const exportUtils =
+    typeof FlowFieldExportUtils !== "undefined" ? FlowFieldExportUtils : null;
+  const csv =
+    exportUtils && typeof exportUtils.buildCSV === "function"
+      ? exportUtils.buildCSV(paths)
+      : buildCSVFallback(paths);
 
   let blob = new Blob([csv], { type: "text/csv" });
   let url = URL.createObjectURL(blob);
@@ -1422,7 +1494,12 @@ function downloadJSON() {
     },
   };
 
-  let json = JSON.stringify(data, null, 2);
+  const exportUtils =
+    typeof FlowFieldExportUtils !== "undefined" ? FlowFieldExportUtils : null;
+  const json =
+    exportUtils && typeof exportUtils.stringifyJSON === "function"
+      ? exportUtils.stringifyJSON(data)
+      : JSON.stringify(data, null, 2);
   let blob = new Blob([json], { type: "application/json" });
   let url = URL.createObjectURL(blob);
   let a = document.createElement("a");
@@ -1433,25 +1510,17 @@ function downloadJSON() {
 }
 
 function downloadSVG() {
-  // Use dynamic width and height variables
-  let svg = `<?xml version="1.0" encoding="UTF-8"?>
-<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-  <rect width="${width}" height="${height}" fill="white"/>
-  <g stroke="black" stroke-width="${STROKE_WEIGHT}" fill="none">
-`;
-
-  for (let path of paths) {
-    if (path.length < 2) continue;
-    svg += '    <polyline points="';
-    for (let i = 0; i < path.length; i++) {
-      svg += `${path[i].x.toFixed(2)},${path[i].y.toFixed(2)}`;
-      if (i < path.length - 1) svg += " ";
-    }
-    svg += '"/>\n';
-  }
-
-  svg += `  </g>
-</svg>`;
+  const exportUtils =
+    typeof FlowFieldExportUtils !== "undefined" ? FlowFieldExportUtils : null;
+  const svg =
+    exportUtils && typeof exportUtils.buildSVG === "function"
+      ? exportUtils.buildSVG({
+          width,
+          height,
+          strokeWeight: STROKE_WEIGHT,
+          paths,
+        })
+      : buildSVGFallback(paths);
 
   let blob = new Blob([svg], { type: "image/svg+xml" });
   let url = URL.createObjectURL(blob);

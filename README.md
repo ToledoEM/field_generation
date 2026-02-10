@@ -156,6 +156,21 @@ The UI auto-populates controls and stores values in `METHOD_PARAMS.myMethod.myPa
 5. Use **Random Seed** to lock a new deterministic seed or clear the field for automatic reseeding between runs.
 6. Export via SVG / CSV / JSON buttons once satisfied.
 
+## Regression Checks
+
+Run the web/runtime regression harness locally:
+
+```bash
+node scripts/regression-check.cjs
+```
+
+It validates:
+
+* Field method registry availability
+* Export serializer stability (CSV / JSON / SVG)
+* Seed reproducibility in path tracing
+* Worker/serial tracing parity (including shared-buffer worker path when available)
+
 ## File Structure
 
 ```text
