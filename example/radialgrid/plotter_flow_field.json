@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "timestamp": "2025-10-18T13:17:51.110Z",
+    "canvas_width": 960,
+    "canvas_height": 540
+  },
+  "parameters": {
+    "field_scale": 0.043,
+    "resolution": 30,
+    "num_paths": 4000,
+    "step_size": 3.5,
+    "stroke_weight": 0.5,
+    "seed": 1036251043,
+    "columns": 274,
+    "rows": 154,
+    "interaction": {
+      "repelEnabled": false,
+      "repelRadius": 40,
+      "repelStrength": 0.8,
+      "maxNeighbors": 35,
+      "angleDampen": 0.6
+    }
+  }
+}

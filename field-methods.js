@@ -108,7 +108,8 @@ function buildFieldMethods() {
     },
     curlLike: {
       name: "Pseudo Curl",
-      description: "Finite-difference derivative of Perlin to emulate curl flow.",
+      description:
+        "Finite-difference derivative of Perlin to emulate curl flow.",
       params: {
         epsilon: {
           label: "Derivative ε",
@@ -157,9 +158,9 @@ function buildFieldMethods() {
           label: "Sources Count",
           type: "range",
           min: 1,
-          max: 12,
+          max: 50,
           step: 1,
-          default: 1,
+          default: 3,
         },
         distribution: {
           label: "Distribution",
@@ -433,14 +434,14 @@ function buildFieldMethods() {
           typeof gridColsArg === "number" && gridColsArg > 0
             ? gridColsArg
             : typeof columns === "number"
-            ? columns
-            : 0;
+              ? columns
+              : 0;
         const gridRows =
           typeof gridRowsArg === "number" && gridRowsArg > 0
             ? gridRowsArg
             : typeof rows === "number"
-            ? rows
-            : 0;
+              ? rows
+              : 0;
         if (!gridCols || !gridRows) return createVector(0, 0);
         const params = METHOD_PARAMS.reactionDiffusion;
         if (!params) return createVector(0, 0);
@@ -520,11 +521,7 @@ function buildFieldMethods() {
         flowDirection: {
           label: "Flow Direction",
           type: "select",
-          options: [
-            "alongStreamlines",
-            "acrossStreamlines",
-            "gradientBased",
-          ],
+          options: ["alongStreamlines", "acrossStreamlines", "gradientBased"],
           default: "alongStreamlines",
         },
       },
@@ -533,26 +530,32 @@ function buildFieldMethods() {
           typeof gridColsArg === "number" && gridColsArg > 0
             ? gridColsArg
             : typeof columns === "number"
-            ? columns
-            : 0;
+              ? columns
+              : 0;
         const gridRows =
           typeof gridRowsArg === "number" && gridRowsArg > 0
             ? gridRowsArg
             : typeof rows === "number"
-            ? rows
-            : 0;
+              ? rows
+              : 0;
         if (!gridCols || !gridRows) return createVector(0, 0);
         const params = METHOD_PARAMS.lineIntegralConvolution;
         if (!params) return createVector(0, 0);
 
-        const cache = ensureLineIntegralConvolutionData(gridCols, gridRows, params);
+        const cache = ensureLineIntegralConvolutionData(
+          gridCols,
+          gridRows,
+          params,
+        );
         const idx = j * gridCols + i;
         const baseField = cache.baseField || [];
         const licTexture = cache.licTexture || [];
 
         let baseVec = baseField[idx];
         if (!baseVec) baseVec = createVector(1, 0);
-        const baseCopy = baseVec.copy ? baseVec.copy() : createVector(baseVec.x, baseVec.y);
+        const baseCopy = baseVec.copy
+          ? baseVec.copy()
+          : createVector(baseVec.x, baseVec.y);
         if (baseCopy.magSq() < 1e-8) baseCopy.set(1, 0);
         baseCopy.normalize();
 
