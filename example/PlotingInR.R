@@ -119,3 +119,25 @@ plotter %>%
 ggsave(filename = "plotter_flow_field_colors_big.png")
 ggsave(filename = "plotter_flow_field_colors_big.svg")
 
+####\\\\\\\
+plotter <- read_csv("example_202602/plotter_flow_field_2.csv")
+
+pal <- wes_palette(9, name = "Zissou1", type = "continuous")
+
+
+# Reproduce view of processing page
+plotter %>% ggplot(aes(x,y,group = path_id)) +
+  geom_path() + theme_void() + 
+  coord_fixed()
+
+
+# Assign unique colors per path and generate base plot
+plotter %>% 
+  group_by(path_id) %>% 
+  mutate(color=sample(pal,1)) %>% 
+  ungroup() %>% 
+  ggplot(aes(x,y,group = path_id)) +
+  geom_path(aes(color=color),show.legend = F,linewidth = 0.3) +
+  theme_void() +
+  scale_color_identity() + 
+  coord_polar(clip = "on",start = 1)

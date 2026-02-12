@@ -1,0 +1,24 @@
+{
+  "metadata": {
+    "timestamp": "2026-02-11T00:01:13.914Z",
+    "canvas_width": 960,
+    "canvas_height": 540
+  },
+  "parameters": {
+    "field_scale": 0.015,
+    "resolution": 15,
+    "num_paths": 10000,
+    "step_size": 1,
+    "stroke_weight": 0.3,
+    "seed": 19760721,
+    "columns": 960,
+    "rows": 540,
+    "interaction": {
+      "repelEnabled": false,
+      "repelRadius": 40,
+      "repelStrength": 0.8,
+      "maxNeighbors": 35,
+      "angleDampen": 0.6
+    }
+  }
+}
