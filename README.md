@@ -174,13 +174,15 @@ It validates:
 ## File Structure
 
 ```text
-├── index.html        # UI layout & script includes
-├── field-methods.js  # Registry of field definitions + parameter metadata
-├── flowfields.js     # Core controller, caching, workers, repulsion, exports
-├── path-worker.js    # Web Worker that traces path batches off the main thread
-├── img/gui.png       # Interface screenshot
-├── cli/              # Node.js CLI generator (build outputs, methods, noise)
-└── README.md         # Documentation
+├── index.html                 # UI layout & script includes
+├── field-methods.js           # Registry of field definitions + parameter metadata
+├── flowfields.js              # Core controller, caching, workers, repulsion, exports
+├── path-worker.js             # Web Worker that traces path batches off the main thread
+├── img/gui.png                # Interface screenshot
+└── README.md                  # Documentation
+
+# CLI lives in a separate repository:
+../field_generation_cli/       # Node.js CLI generator (build outputs, methods, noise)
 ```
 
 

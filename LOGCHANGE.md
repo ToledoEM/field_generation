@@ -1,7 +1,5 @@
 # Log Change
 
-Versioning starts at `0.1` and increments per historical commit (oldest to newest).
-
 ## v0.9 - 2026-02-10
 - Commit: pending (current working changes)
 - Completed all `P0` web/runtime fixes:
