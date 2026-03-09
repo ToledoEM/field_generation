@@ -42,7 +42,29 @@ let BUCKET_SIZE = 40; // tie to repelRadius default
 let field = [];
 let columns, rows;
 let paths = [];
+let pathColors = []; // parallel to paths; null entry = use default black
 let SEED_MODE = "auto";
+let CURRENT_STEP = 1;
+
+let COLOR_PARAMS = {
+  enabled: false,
+  method: "hslGradient",
+  background: "white",   // "white" | "black"
+  assignMode: "perPath",
+  alpha: 1.0,
+  sortMode: "none",
+  palette: [],
+};
+
+let PERTURBATION_PARAMS = {
+  enabled: false,
+  activeTypes: [],
+  configs: {
+    radialImpulse: { strength: 1.5, radius: 0.25, cx: 0.5, cy: 0.5 },
+    gravityWell:   { strength: 1.0, cx: 0.5, cy: 0.5, minDist: 0.01 },
+    rollingBall:   { radius: 0.15, springK: 0.4, cx: 0.5, cy: 0.5 },
+  }
+};
 
 // Hybrid parallelization state
 const NUM_WORKERS =
@@ -474,11 +496,14 @@ function setup() {
   canvas.parent("canvasContainer");
   columns = floor(width / STEP_SIZE);
   rows = floor(height / STEP_SIZE);
+  setStep(1);
   setupMethodParams();
   setTimeout(() => {
     setupSliders();
     setupAspectRatioControl();
     setupGlobalListeners();
+    buildColorUI(document.getElementById("controls"));
+    buildPerturbationUI(document.getElementById("controls"));
     showProgressBar(false);
     regenerateSourcesForCurrent();
     regenerate();
@@ -855,12 +880,13 @@ function buildParamsUI() {
     });
     container.appendChild(btn);
   }
-  // Append interaction controls (repulsion)
+  // Append interaction controls (repulsion) — step 1
   buildInteractionUI(container);
 }
 
 function buildInteractionUI(container) {
   const section = document.createElement("div");
+  section.setAttribute("data-step", "1");
   section.style.marginTop = "20px";
   section.style.paddingTop = "12px";
   section.style.borderTop = "1px solid #eee";
@@ -960,6 +986,275 @@ function buildInteractionUI(container) {
   makeRange("Repel Strength", "repelStrength", 0.1, 3, 0.05);
   const maxNeighborsWrap = makeRange("Max Neighbors", "maxNeighbors", 5, 120, 1);
   makeRange("Angle Dampen", "angleDampen", 0.1, 1, 0.05);
+
+  container.appendChild(section);
+}
+
+// ─── Step navigation ──────────────────────────────────────────────────────────
+
+function setStep(n) {
+  CURRENT_STEP = n;
+  document.body.className = `step-${n}-active`;
+  document.querySelectorAll(".step-btn").forEach((b, i) => {
+    b.classList.toggle("active", i + 1 === n);
+  });
+}
+
+// ─── Color pass ───────────────────────────────────────────────────────────────
+
+function applyColor() {
+  // Re-apply color to existing paths without regenerating the field.
+  pathColors = applyColorPalette(paths);
+  renderPaths(paths);
+}
+
+function applyColorPalette(processedPaths) {
+  if (!COLOR_PARAMS.enabled || !Array.isArray(processedPaths) || !processedPaths.length) {
+    return [];
+  }
+  const methods = typeof COLOR_METHODS !== "undefined" ? COLOR_METHODS : null;
+  const method = methods && methods[COLOR_PARAMS.method];
+  if (!method || typeof method.assignPath !== "function") return [];
+
+  const colors = [];
+  const count = processedPaths.length;
+  for (let i = 0; i < count; i++) {
+    const path = processedPaths[i];
+    const startX = path[0] ? path[0].x : 0;
+    const startY = path[0] ? path[0].y : 0;
+    colors.push(method.assignPath(i, count, {
+      startX, startY,
+      field, columns, rows, STEP_SIZE,
+      params: COLOR_PARAMS,
+    }));
+  }
+  return colors;
+}
+
+function buildColorUI(container) {
+  const section = document.createElement("div");
+  section.setAttribute("data-step", "2");
+  section.style.marginTop = "20px";
+  section.style.paddingTop = "12px";
+  section.style.borderTop = "1px solid #eee";
+
+  const title = document.createElement("div");
+  title.textContent = "Color Settings";
+  title.style.fontSize = "12px";
+  title.style.fontWeight = "700";
+  title.style.marginBottom = "8px";
+  section.appendChild(title);
+
+  // Enabled toggle
+  const enableWrap = document.createElement("div");
+  enableWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px;";
+  const enableCb = document.createElement("input");
+  enableCb.type = "checkbox";
+  enableCb.checked = COLOR_PARAMS.enabled;
+  enableCb.addEventListener("change", () => {
+    COLOR_PARAMS.enabled = enableCb.checked;
+    regenerate();
+  });
+  const enableLbl = document.createElement("label");
+  enableLbl.textContent = "Enable Color";
+  enableLbl.style.cssText = "font-size:11px;font-weight:600;";
+  enableWrap.appendChild(enableCb);
+  enableWrap.appendChild(enableLbl);
+  section.appendChild(enableWrap);
+
+  // Method selector
+  const methodWrap = document.createElement("div");
+  methodWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px;";
+  const methodLbl = document.createElement("label");
+  methodLbl.textContent = "Method";
+  methodLbl.style.cssText = "font-size:11px;font-weight:600;min-width:60px;";
+  const methodSel = document.createElement("select");
+  methodSel.style.cssText = "font-size:11px;flex:1;";
+  const methodNames = typeof COLOR_METHODS !== "undefined"
+    ? Object.keys(COLOR_METHODS)
+    : ["hslGradient", "solidPalette", "fieldAngle"];
+  methodNames.forEach(key => {
+    const opt = document.createElement("option");
+    opt.value = key;
+    opt.textContent = (typeof COLOR_METHODS !== "undefined" && COLOR_METHODS[key])
+      ? COLOR_METHODS[key].name
+      : key;
+    if (key === COLOR_PARAMS.method) opt.selected = true;
+    methodSel.appendChild(opt);
+  });
+  methodSel.addEventListener("change", () => {
+    COLOR_PARAMS.method = methodSel.value;
+    maybeAutoRegenerate();
+  });
+  methodWrap.appendChild(methodLbl);
+  methodWrap.appendChild(methodSel);
+  section.appendChild(methodWrap);
+
+  // Background
+  const bgWrap = document.createElement("div");
+  bgWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:6px;";
+  const bgLbl = document.createElement("label");
+  bgLbl.textContent = "Background";
+  bgLbl.style.cssText = "font-size:11px;font-weight:600;min-width:60px;";
+  const bgSel = document.createElement("select");
+  bgSel.style.cssText = "font-size:11px;flex:1;";
+  ["white", "black"].forEach(v => {
+    const opt = document.createElement("option");
+    opt.value = v; opt.textContent = v.charAt(0).toUpperCase() + v.slice(1);
+    if (v === COLOR_PARAMS.background) opt.selected = true;
+    bgSel.appendChild(opt);
+  });
+  bgSel.addEventListener("change", () => {
+    COLOR_PARAMS.background = bgSel.value;
+    maybeAutoRegenerate();
+  });
+  bgWrap.appendChild(bgLbl);
+  bgWrap.appendChild(bgSel);
+  section.appendChild(bgWrap);
+
+  // Alpha slider
+  const alphaWrap = document.createElement("div");
+  alphaWrap.style.cssText = "display:flex;flex-direction:column;gap:4px;margin-bottom:4px;";
+  const alphaLbl = document.createElement("label");
+  alphaLbl.style.cssText = "display:flex;justify-content:space-between;font-size:11px;font-weight:600;";
+  alphaLbl.textContent = "Alpha";
+  const alphaSpan = document.createElement("span");
+  alphaSpan.style.cssText = "font-size:11px;margin-left:6px;";
+  alphaSpan.textContent = COLOR_PARAMS.alpha.toFixed(2);
+  alphaLbl.appendChild(alphaSpan);
+  const alphaInput = document.createElement("input");
+  alphaInput.type = "range"; alphaInput.min = 0.05; alphaInput.max = 1; alphaInput.step = 0.05;
+  alphaInput.value = COLOR_PARAMS.alpha;
+  alphaInput.addEventListener("input", () => {
+    COLOR_PARAMS.alpha = parseFloat(alphaInput.value);
+    alphaSpan.textContent = COLOR_PARAMS.alpha.toFixed(2);
+    maybeAutoRegenerate();
+  });
+  alphaWrap.appendChild(alphaLbl);
+  alphaWrap.appendChild(alphaInput);
+  section.appendChild(alphaWrap);
+
+  // Apply Color button
+  const applyBtn = document.createElement("button");
+  applyBtn.textContent = "Apply Color";
+  applyBtn.style.cssText = "margin-top:10px;width:100%;padding:9px;background:var(--accent-color);color:#fff;border:none;border-radius:4px;font-size:13px;font-weight:600;cursor:pointer;";
+  applyBtn.addEventListener("click", applyColor);
+  section.appendChild(applyBtn);
+
+  container.appendChild(section);
+}
+
+// ─── Perturbation pass ────────────────────────────────────────────────────────
+
+function applyFieldPerturbations(typedField, cols, rows) {
+  if (!PERTURBATION_PARAMS.enabled || !PERTURBATION_PARAMS.activeTypes.length) return;
+  const methods = typeof PERTURBATION_METHODS !== "undefined" ? PERTURBATION_METHODS : null;
+  if (!methods) return;
+  for (const type of PERTURBATION_PARAMS.activeTypes) {
+    const m = methods[type];
+    if (!m || m.timing !== "postField" || typeof m.apply !== "function") continue;
+    m.apply(typedField, cols, rows, PERTURBATION_PARAMS.configs[type] || {});
+  }
+}
+
+function buildPerturbationUI(container) {
+  const section = document.createElement("div");
+  section.setAttribute("data-step", "3");
+  section.style.marginTop = "20px";
+  section.style.paddingTop = "12px";
+  section.style.borderTop = "1px solid #eee";
+
+  const title = document.createElement("div");
+  title.textContent = "Field Perturbations";
+  title.style.fontSize = "12px";
+  title.style.fontWeight = "700";
+  title.style.marginBottom = "8px";
+  section.appendChild(title);
+
+  // Enabled toggle
+  const enableWrap = document.createElement("div");
+  enableWrap.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px;";
+  const enableCb = document.createElement("input");
+  enableCb.type = "checkbox";
+  enableCb.checked = PERTURBATION_PARAMS.enabled;
+  enableCb.addEventListener("change", () => {
+    PERTURBATION_PARAMS.enabled = enableCb.checked;
+    regenerate();
+  });
+  const enableLbl = document.createElement("label");
+  enableLbl.textContent = "Enable Perturbations";
+  enableLbl.style.cssText = "font-size:11px;font-weight:600;";
+  enableWrap.appendChild(enableCb);
+  enableWrap.appendChild(enableLbl);
+  section.appendChild(enableWrap);
+
+  // Type checkboxes
+  const typeDefs = typeof PERTURBATION_METHODS !== "undefined"
+    ? Object.entries(PERTURBATION_METHODS)
+    : [["radialImpulse","Radial Impulse"],["gravityWell","Gravity Well"],["rollingBall","Rolling Ball"]].map(([k,n])=>[k,{name:n}]);
+
+  typeDefs.forEach(([key, meta]) => {
+    const typeWrap = document.createElement("div");
+    typeWrap.style.cssText = "display:flex;align-items:center;gap:6px;margin-bottom:4px;";
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.checked = PERTURBATION_PARAMS.activeTypes.includes(key);
+    cb.addEventListener("change", () => {
+      if (cb.checked) {
+        if (!PERTURBATION_PARAMS.activeTypes.includes(key)) PERTURBATION_PARAMS.activeTypes.push(key);
+      } else {
+        PERTURBATION_PARAMS.activeTypes = PERTURBATION_PARAMS.activeTypes.filter(t => t !== key);
+      }
+      if (PERTURBATION_PARAMS.enabled) maybeAutoRegenerate();
+    });
+    const lbl = document.createElement("label");
+    lbl.textContent = meta.name || key;
+    lbl.style.cssText = "font-size:11px;font-weight:500;";
+    typeWrap.appendChild(cb);
+    typeWrap.appendChild(lbl);
+    section.appendChild(typeWrap);
+
+    // Params for this type
+    const cfg = PERTURBATION_PARAMS.configs[key];
+    if (!cfg) return;
+    const paramSection = document.createElement("div");
+    paramSection.style.cssText = "margin-left:18px;margin-bottom:6px;display:flex;flex-direction:column;gap:4px;";
+    Object.entries(cfg).forEach(([pKey, pVal]) => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;flex-direction:column;gap:2px;";
+      const lbl2 = document.createElement("label");
+      lbl2.style.cssText = "display:flex;justify-content:space-between;font-size:10px;font-weight:600;";
+      lbl2.textContent = pKey;
+      const valSpan = document.createElement("span");
+      valSpan.style.cssText = "font-size:10px;margin-left:4px;";
+      valSpan.textContent = Number.isFinite(pVal) ? pVal.toFixed(2) : pVal;
+      lbl2.appendChild(valSpan);
+      const inp = document.createElement("input");
+      inp.type = "range";
+      // Determine sensible range from key name
+      const ranges = { strength:[0.1,5,0.1], radius:[0.02,0.8,0.01], cx:[0,1,0.01], cy:[0,1,0.01], minDist:[0.001,0.1,0.001], springK:[0.1,1,0.05] };
+      const [rMin, rMax, rStep] = ranges[pKey] || [0, 2, 0.05];
+      inp.min = rMin; inp.max = rMax; inp.step = rStep;
+      inp.value = pVal;
+      inp.addEventListener("input", () => {
+        const num = parseFloat(inp.value);
+        cfg[pKey] = num;
+        valSpan.textContent = num.toFixed(2);
+        if (PERTURBATION_PARAMS.enabled) maybeAutoRegenerate();
+      });
+      row.appendChild(lbl2);
+      row.appendChild(inp);
+      paramSection.appendChild(row);
+    });
+    section.appendChild(paramSection);
+  });
+
+  // Apply Perturbations button
+  const applyPBtn = document.createElement("button");
+  applyPBtn.textContent = "Apply Perturbations";
+  applyPBtn.style.cssText = "margin-top:10px;width:100%;padding:9px;background:var(--accent-color);color:#fff;border:none;border-radius:4px;font-size:13px;font-weight:600;cursor:pointer;";
+  applyPBtn.addEventListener("click", regenerate);
+  section.appendChild(applyPBtn);
 
   container.appendChild(section);
 }
@@ -1076,6 +1371,7 @@ function regenerate() {
   updateProgressBar(0);
 
   const fieldBuffer = generateField();
+  applyFieldPerturbations(fieldBuffer, columns, rows);
   lastFieldBuffer = fieldBuffer;
 
   pathSeedBase = computePathSeed();
@@ -1222,6 +1518,7 @@ function finalizeGeneration(rawBuffers, generationToken) {
     processedPaths = applyRepulsion(processedPaths);
   }
 
+  pathColors = applyColorPalette(processedPaths);
   paths = processedPaths;
   renderPaths(paths);
 
@@ -1247,21 +1544,29 @@ function convertBufferToPath(buffer) {
 }
 
 function renderPaths(pathCollection) {
-  background(255);
-  stroke(0);
-  strokeWeight(STROKE_WEIGHT);
+  const bgVal = (COLOR_PARAMS.enabled && COLOR_PARAMS.background === "black") ? 0 : 255;
+  background(bgVal);
   noFill();
 
   if (!Array.isArray(pathCollection) || pathCollection.length === 0) return;
 
-  for (const path of pathCollection) {
+  const useAlpha = COLOR_PARAMS.enabled && COLOR_PARAMS.alpha < 1.0;
+  if (useAlpha) drawingContext.globalAlpha = COLOR_PARAMS.alpha;
+
+  for (let i = 0; i < pathCollection.length; i++) {
+    const path = pathCollection[i];
     if (!path || path.length < 2) continue;
+    const col = (pathColors && pathColors[i]) ? pathColors[i] : "#000000";
+    stroke(col);
+    strokeWeight(STROKE_WEIGHT);
     beginShape();
     for (const point of path) {
       vertex(point.x, point.y);
     }
     endShape();
   }
+
+  if (useAlpha) drawingContext.globalAlpha = 1.0;
 }
 
 // --- Barnes-Hut Quadtree for O(n log n) repulsion ---
@@ -1583,7 +1888,7 @@ function downloadCSV() {
     typeof FlowFieldExportUtils !== "undefined" ? FlowFieldExportUtils : null;
   const csv =
     exportUtils && typeof exportUtils.buildCSV === "function"
-      ? exportUtils.buildCSV(paths)
+      ? exportUtils.buildCSV(paths, { pathColors: pathColors.length ? pathColors : null })
       : buildCSVFallback(paths);
 
   let blob = new Blob([csv], { type: "text/csv" });
@@ -1619,6 +1924,12 @@ function downloadJSON() {
         maxNeighbors: INTERACTION_PARAMS.maxNeighbors,
         angleDampen: INTERACTION_PARAMS.angleDampen,
       },
+      color: { ...COLOR_PARAMS },
+      perturbation: {
+        enabled: PERTURBATION_PARAMS.enabled,
+        activeTypes: [...PERTURBATION_PARAMS.activeTypes],
+        configs: JSON.parse(JSON.stringify(PERTURBATION_PARAMS.configs)),
+      },
     },
   };
 
@@ -1647,6 +1958,8 @@ function downloadSVG() {
           height,
           strokeWeight: STROKE_WEIGHT,
           paths,
+          pathColors: pathColors.length ? pathColors : null,
+          background: COLOR_PARAMS.enabled ? COLOR_PARAMS.background : "white",
         })
       : buildSVGFallback(paths);
 

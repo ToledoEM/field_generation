@@ -7,16 +7,22 @@
 })(
   typeof globalThis !== "undefined" ? globalThis : this,
   function exportUtilsFactory() {
-    function buildCSV(pathCollection) {
+    function buildCSV(pathCollection, options) {
       const paths = Array.isArray(pathCollection) ? pathCollection : [];
-      let csv = "path_id,point_index,x,y\n";
+      const opts = options || {};
+      const pathColors = Array.isArray(opts.pathColors) ? opts.pathColors : null;
+      const hasColors = pathColors && pathColors.length > 0;
+      let csv = hasColors ? "path_id,point_index,x,y,color\n" : "path_id,point_index,x,y\n";
       for (let i = 0; i < paths.length; i++) {
         const path = Array.isArray(paths[i]) ? paths[i] : [];
+        const color = hasColors ? (pathColors[i] || "") : null;
         for (let j = 0; j < path.length; j++) {
           const point = path[j] || {};
           const x = Number.isFinite(point.x) ? point.x : 0;
           const y = Number.isFinite(point.y) ? point.y : 0;
-          csv += `${i},${j},${x.toFixed(2)},${y.toFixed(2)}\n`;
+          csv += hasColors
+            ? `${i},${j},${x.toFixed(2)},${y.toFixed(2)},${color}\n`
+            : `${i},${j},${x.toFixed(2)},${y.toFixed(2)}\n`;
         }
       }
       return csv;
@@ -32,22 +38,33 @@
       const height = Number.isFinite(opts.height) ? opts.height : 0;
       const strokeWeight = Number.isFinite(opts.strokeWeight) ? opts.strokeWeight : 1;
       const pathCollection = Array.isArray(opts.paths) ? opts.paths : [];
+      const pathColors = Array.isArray(opts.pathColors) ? opts.pathColors : null;
+      const hasPerPathColor = pathColors && pathColors.length > 0;
+      const bg = opts.background === "black" ? "black" : "white";
+
+      const groupAttr = hasPerPathColor
+        ? `fill="none"`
+        : `stroke="black" stroke-width="${strokeWeight}" fill="none"`;
 
       let svg = `<?xml version="1.0" encoding="UTF-8"?>
 <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-  <rect width="${width}" height="${height}" fill="white"/>
-  <g stroke="black" stroke-width="${strokeWeight}" fill="none">
+  <rect width="${width}" height="${height}" fill="${bg}"/>
+  <g ${groupAttr}>
 `;
 
-      for (const path of pathCollection) {
+      for (let i = 0; i < pathCollection.length; i++) {
+        const path = pathCollection[i];
         if (!Array.isArray(path) || path.length < 2) continue;
-        svg += '    <polyline points="';
-        for (let i = 0; i < path.length; i++) {
-          const point = path[i] || {};
+        const strokeAttr = hasPerPathColor
+          ? ` stroke="${pathColors[i] || "black"}" stroke-width="${strokeWeight}"`
+          : "";
+        svg += `    <polyline${strokeAttr} points="`;
+        for (let j = 0; j < path.length; j++) {
+          const point = path[j] || {};
           const x = Number.isFinite(point.x) ? point.x : 0;
           const y = Number.isFinite(point.y) ? point.y : 0;
           svg += `${x.toFixed(2)},${y.toFixed(2)}`;
-          if (i < path.length - 1) svg += " ";
+          if (j < path.length - 1) svg += " ";
         }
         svg += '"/>\n';
       }

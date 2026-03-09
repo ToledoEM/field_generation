@@ -277,6 +277,38 @@
             line-height: 1.5;
             text-align: center;
         }
+
+        /* ── Step navigation ── */
+        #stepNav {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 16px;
+            border-bottom: 2px solid var(--accent-color);
+            padding-bottom: 10px;
+        }
+        .step-btn {
+            flex: 1;
+            padding: 7px 4px;
+            font-size: 12px;
+            font-weight: 600;
+            background: #e9ecef;
+            color: var(--text-color);
+            border: none;
+            border-radius: 4px 4px 0 0;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .step-btn:hover { background: #dee2e6; }
+        .step-btn.active {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        /* Step visibility: only show controls matching current step */
+        body.step-1-active [data-step]:not([data-step="1"]) { display: none !important; }
+        body.step-2-active [data-step]:not([data-step="2"]) { display: none !important; }
+        body.step-3-active [data-step]:not([data-step="3"]) { display: none !important; }
+        /* Elements without data-step (header, nav, buttons) are always visible */
     </style>
 </head>
 <body>
@@ -286,7 +318,13 @@
         <div id="controls">
             <h2>Flow Field Controls</h2>
 
-            <div class="control-group" style="border-top: none; padding-top: 0;">
+            <div id="stepNav">
+                <button class="step-btn active" onclick="setStep(1)">1 · Field</button>
+                <button class="step-btn" onclick="setStep(2)">2 · Color</button>
+                <button class="step-btn" onclick="setStep(3)">3 · Perturb</button>
+            </div>
+
+            <div data-step="1" class="control-group" style="border-top: none; padding-top: 0;">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="aspectRatioSelect">Canvas Aspect Ratio</label>
                     <span class="value-display" id="aspectRatioValue">800x800</span>
@@ -297,7 +335,7 @@
                 </div>
             </div>
 
-            <div class="control-group">
+            <div data-step="1" class="control-group">
                 <div style="display: flex; justify-content: space-between; align-items:center;">
                     <label for="fieldMethod">Field Method</label>
                     <span class="value-display" id="fieldMethodLabel">Quantized Perlin</span>
@@ -308,7 +346,7 @@
                 </div>
             </div>
 
-            <div class="control-group">
+            <div data-step="1" class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="fieldScale">Field Scale</label>
                     <span class="value-display" id="fieldScaleValue">0.005</span>
@@ -318,7 +356,7 @@
                 </div>
             </div>
 
-            <div class="control-group">
+            <div data-step="1" class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="resolution">Resolution</label>
                     <span class="value-display" id="resolutionValue">30</span>
@@ -328,7 +366,7 @@
                 </div>
             </div>
 
-            <div class="control-group">
+            <div data-step="1" class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="numPaths">Number of Paths</label>
                     <span class="value-display" id="numPathsValue">500</span>
@@ -338,7 +376,7 @@
                 </div>
             </div>
 
-            <div class="control-group">
+            <div data-step="1" class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="stepSize">Step Size</label>
                     <span class="value-display" id="stepSizeValue">4.0</span>
@@ -348,7 +386,7 @@
                 </div>
             </div>
 
-            <div class="control-group">
+            <div data-step="1" class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="strokeWeight">Stroke Weight</label>
                     <span class="value-display" id="strokeWeightValue">0.5</span>
@@ -358,7 +396,7 @@
                 </div>
             </div>
 
-            <div class="control-group">
+            <div data-step="1" class="control-group">
                 <div style="display: flex; justify-content: space-between;">
                     <label for="seedInput">Seed</label>
                     <span class="value-display" id="seedValue">Random</span>
@@ -367,7 +405,7 @@
                 <button onclick="randomizeSeed()">Random Seed</button>
             </div>
 
-            <div class="button-group">
+            <div data-step="1" class="button-group">
                 <button onclick="regenerate()">Regenerate</button>
                 <button onclick="downloadSVG()">Download SVG</button>
                 <button onclick="downloadCSV()">Download CSV</button>
@@ -407,6 +445,8 @@
     <script src="field-methods.js"></script>
     <script src="export-utils.js"></script>
     <script src="path-trace-core.js"></script>
+    <script src="color-methods.js"></script>
+    <script src="perturbation-methods.js"></script>
     <script src="flowfields.js"></script>
 </body>
 </html>
