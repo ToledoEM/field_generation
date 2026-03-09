@@ -34,6 +34,7 @@ let INTERACTION_PARAMS = {
   repelStrength: 0.8, // base strength multiplier
   maxNeighbors: 35, // cap to keep performance reasonable
   angleDampen: 0.6, // blend between field direction (1) and repulsion influenced direction
+  repelMode: "classic", // "classic" (spatial hash) or "fast" (Barnes-Hut quadtree)
 };
 let pointBuckets = {}; // spatial hash for path points
 let BUCKET_SIZE = 40; // tie to repelRadius default
@@ -903,6 +904,7 @@ function buildInteractionUI(container) {
     wrap.appendChild(lab);
     wrap.appendChild(input);
     section.appendChild(wrap);
+    return wrap;
   };
 
   // Repel enabled checkbox
@@ -925,9 +927,38 @@ function buildInteractionUI(container) {
   repelWrap.appendChild(repelLabel);
   section.appendChild(repelWrap);
 
+  // Repulsion mode selector (classic vs fast/Barnes-Hut)
+  const modeWrap = document.createElement("div");
+  modeWrap.style.display = "flex";
+  modeWrap.style.alignItems = "center";
+  modeWrap.style.gap = "8px";
+  modeWrap.style.marginTop = "4px";
+  const modeLabel = document.createElement("label");
+  modeLabel.textContent = "Mode";
+  modeLabel.style.fontSize = "11px";
+  modeLabel.style.fontWeight = "600";
+  modeLabel.style.minWidth = "48px";
+  const modeSelect = document.createElement("select");
+  modeSelect.style.fontSize = "11px";
+  modeSelect.style.flex = "1";
+  [["classic", "Classic"], ["fast", "Fast (Barnes-Hut)"]].forEach(([val, txt]) => {
+    const opt = document.createElement("option");
+    opt.value = val; opt.textContent = txt;
+    if (val === INTERACTION_PARAMS.repelMode) opt.selected = true;
+    modeSelect.appendChild(opt);
+  });
+  modeSelect.addEventListener("change", () => {
+    INTERACTION_PARAMS.repelMode = modeSelect.value;
+    maxNeighborsWrap.style.display = modeSelect.value === "classic" ? "" : "none";
+    maybeAutoRegenerate();
+  });
+  modeWrap.appendChild(modeLabel);
+  modeWrap.appendChild(modeSelect);
+  section.appendChild(modeWrap);
+
   makeRange("Repel Radius", "repelRadius", 10, 120, 1);
   makeRange("Repel Strength", "repelStrength", 0.1, 3, 0.05);
-  makeRange("Max Neighbors", "maxNeighbors", 5, 120, 1);
+  const maxNeighborsWrap = makeRange("Max Neighbors", "maxNeighbors", 5, 120, 1);
   makeRange("Angle Dampen", "angleDampen", 0.1, 1, 0.05);
 
   container.appendChild(section);
@@ -1233,37 +1264,133 @@ function renderPaths(pathCollection) {
   }
 }
 
+// --- Barnes-Hut Quadtree for O(n log n) repulsion ---
+
+class BHQuadNode {
+  constructor(x, y, w, h) {
+    this.x = x; this.y = y; this.w = w; this.h = h;
+    this.cx = 0; this.cy = 0; this.mass = 0;
+    this.point = null;
+    this.children = null; // [NW, NE, SW, SE]
+  }
+
+  insert(p) {
+    if (this.mass === 0) {
+      this.cx = p.x; this.cy = p.y; this.mass = 1;
+      this.point = p;
+      return;
+    }
+    if (!this.children) {
+      // Subdivide
+      const hw = this.w / 2, hh = this.h / 2;
+      this.children = [
+        new BHQuadNode(this.x,      this.y,      hw, hh),
+        new BHQuadNode(this.x + hw, this.y,      hw, hh),
+        new BHQuadNode(this.x,      this.y + hh, hw, hh),
+        new BHQuadNode(this.x + hw, this.y + hh, hw, hh),
+      ];
+      if (this.point) {
+        this._insertIntoChild(this.point);
+        this.point = null;
+      }
+    }
+    this._insertIntoChild(p);
+    // Update centre of mass
+    this.cx = (this.cx * this.mass + p.x) / (this.mass + 1);
+    this.cy = (this.cy * this.mass + p.y) / (this.mass + 1);
+    this.mass++;
+  }
+
+  _insertIntoChild(p) {
+    const hw = this.w / 2, hh = this.h / 2;
+    const idx = (p.x >= this.x + hw ? 1 : 0) + (p.y >= this.y + hh ? 2 : 0);
+    this.children[idx].insert(p);
+  }
+
+  // Accumulate repulsion force on point p into out {x,y}
+  calcForce(p, strength, radius, theta, out) {
+    if (this.mass === 0) return;
+    const dx = p.x - this.cx;
+    const dy = p.y - this.cy;
+    const d = Math.sqrt(dx * dx + dy * dy);
+    if (d === 0) return;
+    // Beyond radius: skip
+    if (d > radius) return;
+    // Use approximation if node is far enough relative to its size
+    if (!this.children || (this.w / d < theta)) {
+      // Skip self (single point at same location)
+      if (this.mass === 1 && this.point === p) return;
+      const mag = strength / (d * d);
+      const inv = mag / d;
+      out.x += dx * inv;
+      out.y += dy * inv;
+    } else {
+      for (const child of this.children) {
+        child.calcForce(p, strength, radius, theta, out);
+      }
+    }
+  }
+}
+
+function buildBarnesHutTree(pathCollection) {
+  const tree = new BHQuadNode(0, 0, width, height);
+  for (const path of pathCollection) {
+    for (const point of path) tree.insert(point);
+  }
+  return tree;
+}
+
+// --- End Barnes-Hut ---
+
 function applyRepulsion(pathCollection) {
-  // Post-processing repulsion run on the main thread using a spatial hash.
+  // Post-processing repulsion run on the main thread.
   if (!INTERACTION_PARAMS.repelEnabled) return pathCollection;
 
   const radius = Math.max(1, INTERACTION_PARAMS.repelRadius);
   const strength = INTERACTION_PARAMS.repelStrength;
-  const maxNeighbors = INTERACTION_PARAMS.maxNeighbors;
   const dampen = INTERACTION_PARAMS.angleDampen;
+  const limit = STEP_SIZE * 2;
 
-  BUCKET_SIZE = radius; // keep bucket size aligned with radius slider
-  pointBuckets = {};
-  buildSpatialHash(pathCollection);
-
-  for (const path of pathCollection) {
-    for (const point of path) {
-      const neighbors = queryNeighborsForPoint(point, radius, maxNeighbors);
-      if (!neighbors.length) continue;
-
-      const repulse = createVector(0, 0);
-      for (const n of neighbors) {
-        const dir = createVector(point.x - n.p.x, point.y - n.p.y);
-        const d = Math.max(n.d, 0.0001);
-        const mag = strength / (d * d);
-        dir.normalize().mult(mag);
-        repulse.add(dir);
+  if (INTERACTION_PARAMS.repelMode === "fast") {
+    // Barnes-Hut O(n log n) approximation
+    const theta = 0.9; // accuracy vs speed tradeoff
+    const tree = buildBarnesHutTree(pathCollection);
+    for (const path of pathCollection) {
+      for (const point of path) {
+        const f = { x: 0, y: 0 };
+        tree.calcForce(point, strength, radius, theta, f);
+        const mag = Math.sqrt(f.x * f.x + f.y * f.y);
+        if (mag > limit) { f.x = f.x / mag * limit; f.y = f.y / mag * limit; }
+        point.x = constrain(point.x + f.x * dampen, 0, width);
+        point.y = constrain(point.y + f.y * dampen, 0, height);
       }
-      repulse.limit(STEP_SIZE * 2);
-      point.x += repulse.x * dampen;
-      point.y += repulse.y * dampen;
-      point.x = constrain(point.x, 0, width);
-      point.y = constrain(point.y, 0, height);
+    }
+  } else {
+    // Classic: spatial hash (original behavior, output-identical)
+    const maxNeighbors = INTERACTION_PARAMS.maxNeighbors;
+    BUCKET_SIZE = radius;
+    pointBuckets = {};
+    buildSpatialHash(pathCollection);
+
+    for (const path of pathCollection) {
+      for (const point of path) {
+        const neighbors = queryNeighborsForPoint(point, radius, maxNeighbors);
+        if (!neighbors.length) continue;
+
+        const repulse = createVector(0, 0);
+        for (const n of neighbors) {
+          const dir = createVector(point.x - n.p.x, point.y - n.p.y);
+          const d = Math.max(n.d, 0.0001);
+          const mag = strength / (d * d);
+          dir.normalize().mult(mag);
+          repulse.add(dir);
+        }
+        repulse.limit(limit);
+        point.x += repulse.x * dampen;
+        point.y += repulse.y * dampen;
+        point.x = constrain(point.x, 0, width);
+        point.y = constrain(point.y, 0, height);
+      }
     }
   }
 
@@ -1486,6 +1613,7 @@ function downloadJSON() {
       rows: rows,
       interaction: {
         repelEnabled: INTERACTION_PARAMS.repelEnabled,
+        repelMode: INTERACTION_PARAMS.repelMode,
         repelRadius: INTERACTION_PARAMS.repelRadius,
         repelStrength: INTERACTION_PARAMS.repelStrength,
         maxNeighbors: INTERACTION_PARAMS.maxNeighbors,
